@@ -20,7 +20,13 @@ from .app import webpanel
 from .app import games as g
 from .app import points as p
 
-__plugin_meta__ = {"name": "娱乐助手", "author": "ElainaBot", "version": "2.3.0"}
+__plugin_meta__ = {
+    "name": "娱乐助手",
+    "author": "shitaomuyan-cloud",
+    "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分，含 Web 管理后台，积分按群独立",
+    "version": "2.3.0",
+    "github": "https://github.com/shitaomuyan-cloud/-",
+}
 log = get_logger(PLUGIN, "娱乐助手")
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 _PANEL_HTML = os.path.join(_PLUGIN_DIR, "web", "panel.html")
