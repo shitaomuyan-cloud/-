@@ -251,20 +251,19 @@ def _avatar(event, uid=None):
 
 
 def _prefix_at(event):
-    """返回「头像 + @」前缀 (用于 reply_image / reply(buttons) 等不走 _md 的回复)。"""
+    """返回 <@uid> 前缀 (QQ markdown 自动渲染为 @, bot 头像由消息头部自动显示)。"""
     uid = str(getattr(event, "user_id", "") or "")
     if not uid:
         return ""
-    return f"![头像 #24px #24px]({_avatar(event, uid)}) <@{uid}>\n\n"
+    return f"<@{uid}>\n\n"
 
 
 async def _md(event, text, at=True):
-    """发送回复；at=True 时「头像 + @」一行，内容在下一段。"""
+    """发送回复；at=True 时前置 <@uid> 提及 (QQ 自动显示 bot 头像)。"""
     if at:
         uid = str(getattr(event, "user_id", "") or "")
         if uid and not text.startswith("<@"):
-            avatar = _avatar(event, uid)
-            text = f"![头像 #24px #24px]({avatar}) <@{uid}>\n\n{text}"
+            text = f"<@{uid}>\n\n{text}"
     try:
         await event.reply(text)
     except Exception:
@@ -287,7 +286,7 @@ async def _card(event, title, items=None, desc="", at=True):
     uid = str(getattr(event, "user_id", "") or "")
     head = ""
     if at and uid:
-        head = f"![头像 #24px #24px]({_avatar(event, uid)}) <@{uid}>\n\n"
+        head = f"<@{uid}>\n\n"
     await _md(event, head + _r(title, items or []), at=False)
 
 
