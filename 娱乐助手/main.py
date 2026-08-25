@@ -852,7 +852,7 @@ async def _show_ratio_buttons(event, prompt, draw_cost):
             {"text": "🖥 PC壁纸", "data": f"生图 {p_safe}|1920x1080", "reply": True},
         ],
     ]
-    content = f"🎨 选择生图比例\n描述：「{prompt}」\n扣：{_c(draw_cost)} 积分"
+    content = f"🎨 选择生图比例\n描述：「{_first_line(prompt, 15)}」\n扣：{_c(draw_cost)} 积分"
     try:
         await event.reply(content, buttons=button_rows)
     except Exception:
