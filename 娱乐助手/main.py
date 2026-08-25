@@ -901,6 +901,53 @@ async def _show_ratio_buttons(event, prompt, draw_cost):
         await _md(event, f"🎨 当前框架不支持按钮, 请手动加比例参数:\n生图 {prompt} 1024x1024\n生图 {prompt} 1792x1024\n生图 {prompt} 1024x1792")
 
 
+async def _post_draw_done(event, prompt, draw_cost, size, img_bytes, fallback_url=""):
+    """生图完成: 优先 ARK 模板卡片 — 一条气泡含 @提及 + 大图 + 说明文字 (QQ 原生渲染);
+    上传/发送失败时回退图片消息 (图片 + caption 纯文本)."""
+    title = f"🎨 生成完成「{_first_line(prompt, 8)}」"
+    meta = "\n".join(filter(None, [f"比例：{size}" if size else "", f"消耗：{draw_cost} 积分"]))
+    uid = str(getattr(event, "user_id", "") or "")
+    file_info = ""
+    if img_bytes:
+        try:
+            from core.message.media import _resolve_upload_ep, upload_media_bytes
+
+            sender = getattr(event, "sender", None)
+            if sender is not None:
+                gid = str(getattr(event, "group_id", "") or "") or None
+                endpoint = _resolve_upload_ep(group_id=gid, user_id=uid or None, event=event)
+                fi = await upload_media_bytes(sender, img_bytes, 1, endpoint, file_name="draw.png", event=event)
+                if isinstance(fi, str):
+                    file_info = fi
+                elif isinstance(fi, dict):
+                    file_info = str(fi.get("file_info") or fi.get("url") or "")
+        except Exception:
+            file_info = ""
+    if file_info:
+        try:
+            # ARK 模板 24: #DESC# #PROMPT# #TITLE# #METADESC# #IMG# #LINK# #SUBTITLE#
+            kv = (meta, f"<@{uid}>" if uid else "", title, "", file_info, "", "")
+            await event.reply_ark(24, kv)
+            return
+        except Exception as e:
+            log.warning("ARK 发送失败, 回退图片消息: %s", e)
+    # 回退: 图片消息
+    caption = "\n".join(filter(None, [title, meta]))
+    if img_bytes:
+        try:
+            await event.reply_image(img_bytes, content=caption)
+            return
+        except Exception:
+            pass
+    if fallback_url:
+        try:
+            await event.reply_image(fallback_url, content=caption)
+            return
+        except Exception:
+            pass
+    await _md(event, _prefix_at(event) + caption + (f"\n{fallback_url}" if fallback_url else "\n生图失败"))
+
+
 async def _draw_legacy(event, prompt, draw_cost, size=""):
     """内置绘图接口 (百度绘图, 兼容旧行为)。"""
     await _md(event, f"🎨 正在生成「{_first_line(prompt, 8)}」…")
