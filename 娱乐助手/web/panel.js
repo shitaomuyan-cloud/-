@@ -75,8 +75,8 @@ function bindCfgTabs(){
       const tab = btn.dataset.cfgTab;
       const rulesEl = document.getElementById('cfg-rules');
       const hostingEl = document.getElementById('cfg-hosting');
-      if(rulesEl) rulesEl.hidden = (tab !== 'rules');
-      if(hostingEl) hostingEl.hidden = (tab !== 'hosting');
+      if(rulesEl){ rulesEl.hidden = (tab !== 'rules'); rulesEl.classList.toggle('tab-active', tab === 'rules'); }
+      if(hostingEl){ hostingEl.hidden = (tab !== 'hosting'); hostingEl.classList.toggle('tab-active', tab === 'hosting'); }
     };
   });
   const sd = document.getElementById('save-draw-config');
