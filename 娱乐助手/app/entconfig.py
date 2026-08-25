@@ -38,6 +38,7 @@ DEFAULTS = {
     "draw_api_key": "",
     "draw_model": "gpt-image-2",
     "draw_proxy": "",
+    "draw_safety_enabled": True,  # 生图描述安全审核 (调 ai_llm 模块 LLM 判定)
 }
 
 
