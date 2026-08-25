@@ -168,7 +168,27 @@ body{font-family:"PingFang SC","Microsoft YaHei",-apple-system,Segoe UI,Roboto,s
 .bottom-nav button.active{color:var(--primary)}
 .bottom-nav button.active i{transform:translateY(-1px)}
 .workspace{padding-bottom:118px}
-@media(min-width:900px){.bottom-nav{max-width:min(680px,86vw);left:50%;right:auto;transform:translateX(-50%);padding:10px 14px calc(10px + env(safe-area-inset-bottom))}.bottom-nav button{padding:8px 2px;font-size:12px;gap:4px}.bottom-nav button i{width:26px;height:26px}.bottom-nav button svg{width:26px;height:26px}}
+
+/* ===== 底部导航响应式 (三档) ===== */
+/* 极窄屏 (< 420px): 只图标, 文字隐藏 */
+@media(max-width:420px){
+  .bottom-nav{padding:6px 4px calc(6px + env(safe-area-inset-bottom));left:8px;right:8px;border-radius:18px}
+  .bottom-nav button{padding:10px 2px;gap:0;font-size:10px;min-width:0}
+  .bottom-nav button span{display:none}
+  .bottom-nav button i,.bottom-nav button svg{width:26px;height:26px}
+}
+/* 中等屏 (420-900px): 图标 + 小文字 */
+@media(min-width:420px) and (max-width:899px){
+  .bottom-nav{padding:8px 6px calc(8px + env(safe-area-inset-bottom));left:10px;right:10px;border-radius:20px}
+  .bottom-nav button{padding:6px 0;font-size:10px;gap:3px}
+  .bottom-nav button i,.bottom-nav button svg{width:22px;height:22px}
+}
+/* 宽屏 (>= 900px): 居中更宽, 图标文字加大 */
+@media(min-width:900px){
+  .bottom-nav{max-width:min(680px,86vw);left:50%;right:auto;transform:translateX(-50%);padding:10px 14px calc(10px + env(safe-area-inset-bottom))}
+  .bottom-nav button{padding:8px 2px;font-size:12px;gap:4px}
+  .bottom-nav button i,.bottom-nav button svg{width:26px;height:26px}
+}
 
 /* ===== 配置页悬浮导航栏 (fixed 固定, 贴顶部, 宽度自适应) ===== */
 .cfg-nav{position:fixed;top:56px;left:0;right:0;z-index:45;display:flex;gap:8px;padding:10px 28px;background:rgba(255,255,255,.9);backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);border-bottom:1px solid var(--border)}
