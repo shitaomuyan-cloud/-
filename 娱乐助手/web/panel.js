@@ -21,9 +21,9 @@ const COMMANDS=[
 {n:"生图 描述",d:"花积分AI绘图",tag:"消耗"},{n:"添加积分",d:"管理员加积分",tag:"管理"},
 {n:"删除积分",d:"管理员扣积分",tag:"管理"},{n:"娱乐帮助",d:"查看全部指令",tag:"系统"},
 ];
-const TITLES={overview:"数据总览",config:"规则配置",users:"积分管理",redpacks:"红包管理",about:"指令说明"};
-function switchPage(name){const btns=document.querySelectorAll(".nav button");btns.forEach(b=>b.classList.toggle("active",b.dataset.page===name));document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active",p.id==="page-"+name));const t=document.getElementById("page-title");if(t)t.textContent=TITLES[name]||"";window.scrollTo(0,0);}
-function bindNav(){document.querySelectorAll(".nav button[data-page]").forEach(b=>{b.onclick=()=>switchPage(b.dataset.page);});document.querySelectorAll("[data-open-page]").forEach(b=>{b.onclick=()=>switchPage(b.dataset.openPage);});}
+const TITLES={overview:"数据总览",config:"规则配置",users:"用户管理",redpacks:"红包管理",about:"指令说明"};
+function switchPage(name){const btns=document.querySelectorAll(".bottom-nav button");btns.forEach(b=>b.classList.toggle("active",b.dataset.page===name));document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active",p.id==="page-"+name));const t=document.getElementById("page-title");if(t)t.textContent=TITLES[name]||"";window.scrollTo(0,0);}
+function bindNav(){document.querySelectorAll(".bottom-nav button[data-page]").forEach(b=>{b.onclick=()=>switchPage(b.dataset.page);});document.querySelectorAll("[data-open-page]").forEach(b=>{b.onclick=()=>switchPage(b.dataset.openPage);});}
 document.addEventListener("DOMContentLoaded",()=>{init();});
 let ALL_USERS=[],CONFIG={},PACK_COUNT=0;
 async function loadUsers(){try{ALL_USERS=(await api("GET","users")).data||[];renderUsers();renderTop();}catch(e){errToast(e);}}
