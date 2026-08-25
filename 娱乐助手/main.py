@@ -915,46 +915,13 @@ async def _show_ratio_buttons(event, prompt, draw_cost):
 
 
 
-def _parse_size(size):
-    """'1920x1080' -> (1920, 1080); 解析失败返回 (1024, 1024)。"""
-    try:
-        w, _, h = str(size or "").partition("x")
-        return int(w.strip()), int(h.strip())
-    except Exception:
-        return 1024, 1024
-
 
 async def _post_draw_done(event, prompt, draw_cost, size, img_bytes, fallback_url=""):
-    """生图完成: 一条 markdown 气泡 = 圆形头像 + @提及 + 标题 + 图片 + 说明.
-    走框架 image_hosting 图床 (默认 chevereto/picgo.net 永久 HTTPS 公网 URL, QQ 必渲染);
-    图床不可用时回退图片消息. """
+    """生图完成: 一条图片消息 (图片 + caption 纯文本说明).
+    QQ 图片消息 caption 协议为纯文本 (不支持 <@uid>/头像内嵌), bot 头像由消息列表头部自动显示.
+    这是 QQ 协议下最稳定的生图展示方案."""
     title = f"🎨 生成完成「{_first_line(prompt, 8)}」"
     meta = "\n".join(filter(None, [f"比例：{size}" if size else "", f"消耗：{draw_cost} 积分"]))
-    img_url = ""
-    if img_bytes:
-        try:
-            from core.application import get_app
-
-            app = get_app()
-            mm = getattr(app, "module_manager", None)
-            hosting = mm.get("image_hosting") if mm else None
-            if hosting:
-                url = hosting.upload_any(img_bytes, "draw.png")
-                if asyncio.iscoroutine(url):
-                    url = await url
-                if isinstance(url, str) and url.startswith("http"):
-                    img_url = url
-        except Exception as e:
-            log.warning("图床上传失败: %s", e)
-    if img_url:
-        w, h = _parse_size(size)
-        md = _prefix_at(event) + title + f"\n\n![生图 #{w}px #{h}px]({img_url})\n\n" + meta
-        try:
-            await event.reply(md)
-            return
-        except Exception as e:
-            log.warning("markdown 图文消息失败, 回退: %s", e)
-    # 回退: 图片消息
     caption = "\n".join(filter(None, [title, meta]))
     if img_bytes:
         try:
