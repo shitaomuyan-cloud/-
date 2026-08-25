@@ -574,14 +574,21 @@ async def cmd_rank(event, match):
     await _md(event, "\n".join(lines), at=False)
 
 
-@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*购买反甲(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="购买反甲", desc="花积分购买反甲护盾", priority=60, block=True, ignore_at_check=True)
+@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*购买反甲(?:\s+(\d+))?\s*$", name="购买反甲", desc="花积分购买反甲护盾 (支持数量: 购买反甲 2)", priority=60, block=True, ignore_at_check=True)
 @_gid_handler
 async def cmd_armor(event, match):
-    if not g.charge(_uid(event), g.ARMOR_COST):
-        return await _md(event, f"⚠️ 积分不足\n反甲需要 {_c(g.ARMOR_COST)} 积分")
-    cnt = p.add_armor(_uid(event))
-    pts = p.get_points(_uid(event))
-    await _card(event, "🛡️ 购买成功", items=[f"反甲：{_c(cnt)} 个", f"剩余积分：{_c(pts)}", "提示：有人抢劫你时会自动反弹"])
+    cfg = entconfig.get_current()
+    cost = int(cfg.get("armor_cost", 100))
+    num = int(match.group(1) or "1")
+    num = max(1, min(num, 999))
+    total = cost * num
+    uid = _uid(event)
+    if not g.can_afford(uid, total):
+        return await _md(event, f"⚠️ 积分不足\n购买 {_c(num)} 个反甲需要 {_c(total)} 积分（当前积分 {_c(p.get_points(uid))}）")
+    g.charge(uid, total)
+    cnt = p.add_armor(uid, num)
+    pts = p.get_points(uid)
+    await _card(event, "🛡️ 购买成功", items=[f"反甲：{_c(num)} 个（现有 {_c(cnt)}）", f"花费：{_c(total)} 积分", f"剩余积分：{_c(pts)}", "提示：有人抢劫你时会自动反弹"])
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*抢劫(?=\s|$|<|@)", name="抢劫", desc="抢劫 @某人 (每日5次, 30秒间隔)", priority=60, block=True, ignore_at_check=True)
