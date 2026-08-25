@@ -795,30 +795,68 @@ async def cmd_money(event, match):
         await _md(event, "💰 「我想要马内」配图已生成")
 
 
-@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*生图(?=\s|$|<|@)", name="生图", desc="扣积分 AI绘图", priority=60, block=True, ignore_at_check=True)
+@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*生图\s*(?P<rest>.+?)\s*$", name="生图", desc="扣积分 AI绘图 (可点按钮选比例)", priority=60, block=True, ignore_at_check=True)
 @_gid_handler
 async def cmd_draw(event, match):
     uid = _uid(event)
-    prompt = _after_keyword(event, "生图")
+    rest = (match.group("rest") or "").strip()
+    # 解析 prompt|size (按钮回调格式: "生图 美女|1024x1024")
+    if "|" in rest:
+        prompt, size = rest.split("|", 1)
+        prompt = prompt.strip()
+        size = size.strip()
+    else:
+        prompt = rest
+        size = ""
     if not prompt:
         return await _md(event, "🎨 请附上绘图描述\n例：生图 一只猫咪")
     cfg = entconfig.get_current()
     draw_cost = int(cfg.get("draw_cost", 50))
-    if not g.charge(uid, draw_cost):
-        return await _md(event, f"⚠️ 积分不足\n生图需要 {_c(draw_cost)} 积分")
     api_base = (cfg.get("draw_api_base") or "").strip()
     api_key = (cfg.get("draw_api_key") or "").strip()
+    # 未指定比例 → 发比例按钮卡片
+    if not size:
+        if not g.can_afford(uid, draw_cost):
+            return await _md(event, f"⚠️ 积分不足\n生图需要 {_c(draw_cost)} 积分")
+        return await _show_ratio_buttons(event, prompt, draw_cost)
+    # 已选比例 → 直接生成
     if api_base and api_key:
-        return await _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key)
-    # 未配置自定义接口 → 回退内置绘图接口 (保证其他用户开箱即用)
-    return await _draw_legacy(event, prompt, draw_cost)
+        return await _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size=size)
+    return await _draw_legacy(event, prompt, draw_cost, size=size)
 
 
-async def _draw_legacy(event, prompt, draw_cost):
+async def _show_ratio_buttons(event, prompt, draw_cost):
+    """发送比例选择按钮卡片 (用户点击后通过 dispatcher 回到 cmd_draw 执行)。"""
+    # 检查积分够不够 (提示但不扣, 等用户选完再扣)
+    if not g.can_afford(_uid(event), draw_cost):
+        return await _md(event, f"⚠️ 积分不足\n生图需要 {_c(draw_cost)} 积分")
+    p_safe = prompt.replace("|", " ")  # 防注入 (极少)
+    button_rows = [
+        [
+            {"text": "1:1 正方形", "data": f"生图 {p_safe}|1024x1024", "reply": True},
+            {"text": "16:9 横屏", "data": f"生图 {p_safe}|1792x1024", "reply": True},
+        ],
+        [
+            {"text": "9:16 竖屏", "data": f"生图 {p_safe}|1024x1792", "reply": True},
+            {"text": "取消", "data": f"生图 {p_safe}|cancel", "reply": True},
+        ],
+    ]
+    content = f"🎨 选择生图比例\n描述：「{prompt}」\n扣：{_c(draw_cost)} 积分"
+    try:
+        await event.reply(content, buttons=button_rows)
+    except Exception:
+        # 框架不支持按钮时回退 markdown 提示
+        await _md(event, f"🎨 当前框架不支持按钮, 请手动加比例参数:\n生图 {prompt} 1024x1024\n生图 {prompt} 1792x1024\n生图 {prompt} 1024x1792")
+
+
+async def _draw_legacy(event, prompt, draw_cost, size=""):
     """内置绘图接口 (百度绘图, 兼容旧行为)。"""
     try:
+        params = {"keyword": prompt}
+        if size:
+            params["size"] = size
         async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.get(_DRAW_API, params={"keyword": prompt})
+            resp = await client.get(_DRAW_API, params=params)
             try:
                 data = resp.json()
             except Exception:
@@ -840,25 +878,29 @@ async def _draw_legacy(event, prompt, draw_cost):
     if not url.startswith("http"):
         g.refund(_uid(event), draw_cost)
         return await _md(event, "⚠️ 生图失败，积分已退还")
-    content = f"🎨 生成完成「{prompt}」\n消耗：{draw_cost} 积分"
+    size_tag = f"\n比例：{size}" if size else ""
+    content = f"🎨 生成完成「{prompt}」{size_tag}\n消耗：{draw_cost} 积分"
     try:
         await event.reply_image(url, content=content)
     except Exception:
         await _md(event, f"🎨 「{prompt}」\n{url}")
 
 
-async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key):
+async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size="1024x1024"):
     """OpenAI 兼容生图接口 (配置在 Web 面板「生图服务」)。"""
     model = (cfg.get("draw_model") or "").strip() or "gpt-image-2"
     proxy = (cfg.get("draw_proxy") or "").strip()
-    await _md(event, f"🎨 正在生成「{prompt}」…")
+    # 取消回调
+    if size == "cancel":
+        return await _md(event, f"已取消生图「{prompt}」")
+    await _md(event, f"🎨 正在生成「{prompt}」({size})…")
     try:
         kwargs = {"proxy": proxy} if proxy else {}
         async with httpx.AsyncClient(timeout=120, **kwargs) as client:
             resp = await client.post(
                 f"{api_base.rstrip('/')}/images/generations",
                 headers={"Authorization": f"Bearer {api_key}"},
-                json={"model": model, "prompt": prompt, "n": 1, "size": "1024x1024"},
+                json={"model": model, "prompt": prompt, "n": 1, "size": size},
             )
             resp.raise_for_status()
             data = resp.json()
@@ -871,7 +913,7 @@ async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key):
         return await _md(event, "⚠️ 生图失败，积分已退还")
     b64 = str(items[0].get("b64_json") or "")
     url = str(items[0].get("url") or "")
-    content = f"🎨 生成完成「{prompt}」\n消耗：{draw_cost} 积分"
+    content = f"🎨 生成完成「{prompt}」\n比例：{size}\n消耗：{draw_cost} 积分"
     if b64:
         try:
             import base64 as _b64
