@@ -574,7 +574,7 @@ async def cmd_rank(event, match):
     await _md(event, "\n".join(lines), at=False)
 
 
-@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*购买反甲(\d+)?\s*$", name="购买反甲", desc="花积分购买反甲护盾 (支持数量: 购买反甲2)", priority=60, block=True, ignore_at_check=True)
+@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*购买反甲\s*(\d+)?\s*$", name="购买反甲", desc="花积分购买反甲护盾 (支持数量: 购买反甲2)", priority=60, block=True, ignore_at_check=True)
 @_gid_handler
 async def cmd_armor(event, match):
     cfg = entconfig.get_current()
