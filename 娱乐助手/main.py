@@ -854,14 +854,23 @@ async def cmd_draw(event, match):
     draw_cost = int(cfg.get("draw_cost", 50))
     api_base = (cfg.get("draw_api_base") or "").strip()
     api_key = (cfg.get("draw_api_key") or "").strip()
-    # 未指定比例 → 发比例按钮卡片
+    # 未指定比例
     if not size:
-        if not g.can_afford(uid, draw_cost):
+        # 已配置自定义接口 → 弹比例按钮 (先检查积分不扣, 选完再扣)
+        if api_base and api_key:
+            if not g.can_afford(uid, draw_cost):
+                return await _md(event, f"⚠️ 积分不足\n生图需要 {_c(draw_cost)} 积分")
+            return await _show_ratio_buttons(event, prompt, draw_cost)
+        # 未配置接口 → 内置百度绘图 (仅 1:1), 直接生成
+        if not g.charge(uid, draw_cost):
             return await _md(event, f"⚠️ 积分不足\n生图需要 {_c(draw_cost)} 积分")
-        return await _show_ratio_buttons(event, prompt, draw_cost)
-    # 已选比例 → 直接生成 (互斥: 同群同一时刻只允许一个生图任务)
+        return await _draw_legacy(event, prompt, draw_cost, size="")
+    # 已选比例 → 扣分 + 直接生成 (互斥: 同群同一时刻只允许一个生图任务)
+    if not g.charge(uid, draw_cost):
+        return await _md(event, f"⚠️ 积分不足\n生图需要 {_c(draw_cost)} 积分")
     gid = str(getattr(event, "group_id", "") or "")
     if not _draw_acquire(gid):
+        g.refund(uid, draw_cost)
         return await _md(event, "⚠️ 该群已有生图任务进行中\n请等待完成后再试")
     try:
         if api_base and api_key:
