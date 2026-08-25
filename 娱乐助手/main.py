@@ -563,13 +563,14 @@ async def cmd_sign(event, match):
 async def cmd_lottery(event, match):
     if not await _limit_guard(event, "lottery", "抽奖", cooldown=0):
         return
+    _lc = entconfig.get_current()["lottery_cost"]
     won, total, insuf, is_win = g.lottery(_uid(event))
     if insuf:
-        return await _md(event, f"⚠️ 积分不足\n抽奖需要 {_c(g.LOTTERY_COST)} 积分")
+        return await _md(event, f"⚠️ 积分不足\n抽奖需要 {_c(_lc)} 积分")
     if is_win:
         await _card(event, "🎉 中奖啦", items=[f"获得积分：{_c(chr(43)+str(won))}", f"当前积分：{_c(total)}"])
     else:
-        await _card(event, "😔 没中奖", items=[f"消耗：{_c(g.LOTTERY_COST)} 积分", f"当前积分：{_c(total)}"])
+        await _card(event, "😔 没中奖", items=[f"消耗：{_c(_lc)} 积分", f"当前积分：{_c(total)}"])
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*我的(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="我的", desc="查看个人积分/反甲/排名/签到状态", priority=60, block=True, ignore_at_check=True)
@@ -712,7 +713,7 @@ async def cmd_mute(event, match):
     nums = _all_numbers(event)
     minutes = nums[0] if nums else 1
     minutes = max(1, min(43200, minutes))  # 1分钟 ~ 30天
-    cost = minutes * g.MUTE_COST
+    cost = minutes * entconfig.get_current()["mute_cost"]
     if not g.can_afford(uid, cost):
         return await _md(event, f"⚠️ 积分不足\n禁言 {_c(minutes)} 分钟需要 {_c(cost)} 积分")
     g.charge(uid, cost)
@@ -740,12 +741,12 @@ async def cmd_mute(event, match):
 @_gid_handler
 async def cmd_recall(event, match):
     uid = _uid(event)
-    if not g.charge(uid, g.REVOKE_COST):
-        return await _md(event, f"⚠️ 积分不足\n撤回需要 {_c(g.REVOKE_COST)} 积分")
+    if not g.charge(uid, entconfig.get_current()["revoke_cost"]):
+        return await _md(event, f"⚠️ 积分不足\n撤回需要 {_c(entconfig.get_current()['revoke_cost'])} 积分")
     # 识别被引用消息: 1) ref_msg_idx 反查  2) msg_elements 内容匹配（均仅限机器人发送的消息）
     msg_id = _ref_msg_id_from_raw(event)
     if not msg_id:
-        g.refund(uid, g.REVOKE_COST)
+        g.refund(uid, entconfig.get_current()["revoke_cost"])
         return await _md(event, "⚠️ 无法撤回：该消息未同步到机器人（贴纸/系统消息QQ不推送，或消息日志已过期），积分已退还")
     log.info("撤回请求: msg_id=%s", msg_id)
     sender = getattr(event, "_sender", None)
@@ -775,10 +776,10 @@ async def cmd_recall(event, match):
         if rc is not None and rc != 0:
             business_ok = False
     if not business_ok:
-        g.refund(uid, g.REVOKE_COST)
+        g.refund(uid, entconfig.get_current()["revoke_cost"])
         msg = (data.get("msg") or data.get("message") or last_err or "无权限或消息不存在") if isinstance(data, dict) else (last_err or "未知")
         return await _md(event, f"⚠️ 撤回失败：{msg}（积分已退还）")
-    await _card(event, "🗑️ 撤回成功", items=[f"消耗：{_c(g.REVOKE_COST)} 积分", f"剩余积分：{_c(p.get_points(uid))}"])
+    await _card(event, "🗑️ 撤回成功", items=[f"消耗：{_c(entconfig.get_current()['revoke_cost'])} 积分", f"剩余积分：{_c(p.get_points(uid))}"])
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*单身狗(?=\s|$|<|@)", name="单身狗", desc="恶搞QQ头像生成单身狗配图", priority=60, block=True, ignore_at_check=True)
