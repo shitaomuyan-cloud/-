@@ -272,9 +272,18 @@ _DRAW_BLOCKED_WORDS = (
 
 
 def _draw_keyword_check(prompt: str):
-    """本地敏感词检查, 命中返回 (hit_word, hit_category), 否则 None."""
+    """本地敏感词检查 (优先当前群配置 draw_blocked_words, 未配置用内置默认), 命中返回词, 否则 None."""
     folded = str(prompt or "").casefold()
-    for w in _DRAW_BLOCKED_WORDS:
+    words = _DRAW_BLOCKED_WORDS
+    try:
+        cfg_words = str(entconfig.get_current().get("draw_blocked_words") or "").strip()
+        if cfg_words:
+            words = tuple(w.strip() for w in cfg_words.split(",") if w.strip())
+    except Exception:
+        pass
+    if not words:
+        return None
+    for w in words:
         if w.casefold() in folded:
             return w
     return None
