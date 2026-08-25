@@ -287,20 +287,63 @@ async def _api_save_config(request):
     return web.json_response({"success": True, "data": load_config()})
 
 
+def _list_joined_groups():
+    """获取机器人已加入的所有群 [{group_id, group_name, member_count}], 失败返回空列表。"""
+    out = []
+    try:
+        from core.application import get_app
+
+        app = get_app()
+        bots = getattr(app, "_bots", {}) if app else {}
+    except Exception:
+        return out
+    seen = set()
+    for appid, bot in bots.items():
+        try:
+            rows = bot.log_service.query_data(
+                "SELECT group_id, group_name, group_member_num, in_group "
+                "FROM groups_users WHERE group_id != ? AND in_group = 1",
+                (""),
+            )
+        except Exception:
+            continue
+        for row in rows or []:
+            gid = str(row.get("group_id") or "").strip()
+            if not gid or gid in seen:
+                continue
+            seen.add(gid)
+            out.append({
+                "group_id": gid,
+                "group_name": str(row.get("group_name") or ""),
+                "member_count": int(row.get("group_member_num") or 0),
+            })
+    return out
+
+
 async def _api_groups(request):
-    """返回所有有数据的群 id 列表 (Web 群选择器用)。"""
-    gids = set()
+    """返回所有群 (机器人已加入的 + 本插件有数据的), 用于 Web 群选择器。"""
+    joined = _list_joined_groups()
+    # 合并本地有数据的群 (可能机器人已退出但数据还在)
+    by_id = {g["group_id"]: g for g in joined}
     for gid in p.list_groups():
-        gids.add(str(gid))
+        s = str(gid)
+        if s not in by_id:
+            by_id[s] = {"group_id": s, "group_name": "", "member_count": 0}
     for gid in rs.list_groups():
-        gids.add(str(gid))
+        s = str(gid)
+        if s not in by_id:
+            by_id[s] = {"group_id": s, "group_name": "", "member_count": 0}
     data = []
-    for gid in sorted(gids):
+    for gid, g in by_id.items():
         data.append({
             "id": gid,
+            "name": g.get("group_name", ""),
+            "members": g.get("member_count", 0),
             "users": p.group_user_count(gid),
             "legacy": gid == "__legacy__",
         })
+    # 排序: 有数据的优先, 然后按群名
+    data.sort(key=lambda x: (0 if x["users"] > 0 else 1, x.get("name") or x["id"]))
     return web.json_response({"success": True, "data": data})
 
 

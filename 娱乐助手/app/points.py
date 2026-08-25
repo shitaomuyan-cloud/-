@@ -105,7 +105,7 @@ def _gid_store(gid=None):
     """返回该群的用户字典; 不存在时创建 (并继承 __legacy__ 旧数据)。"""
     gid = str(gid if gid is not None else _gid())
     if not gid or gid == "_meta":
-        gid = "_no_group"
+        return {}
     data = _load()
     store = data.get(gid)
     if store is None:
