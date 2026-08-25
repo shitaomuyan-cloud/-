@@ -71,6 +71,17 @@ def _gid_handler(fn):
     return wrapper
 
 
+
+
+def _first_line(text, limit=20):
+    """描述截断: 只保留第一行, 长度超 limit 加省略号. 用于生图 caption 等 '描述只能在第一行' 场景。"""
+    text = str(text or "").strip()
+    # 移除换行, 只留第一行内容
+    head = text.splitlines()[0] if text else ""
+    if len(head) > limit:
+        return head[:limit].rstrip() + "…"
+    return head
+
 def _uid(event):
     uid = str(getattr(event, "user_id", "") or "")
     if uid:
@@ -878,8 +889,12 @@ async def _draw_legacy(event, prompt, draw_cost, size=""):
     if not url.startswith("http"):
         g.refund(_uid(event), draw_cost)
         return await _md(event, "⚠️ 生图失败，积分已退还")
-    size_tag = f"\n比例：{size}" if size else ""
-    content = f"🎨 生成完成「{prompt}」{size_tag}\n消耗：{draw_cost} 积分"
+    title = _first_line(f"生成完成「{prompt}」", 20)
+    info_lines = []
+    if size:
+        info_lines.append(f"比例：{size}")
+    info_lines.append(f"消耗：{draw_cost} 积分")
+    content = f"🎨 {title}\n" + "\n".join(info_lines)
     try:
         await event.reply_image(url, content=content)
     except Exception:
@@ -913,7 +928,8 @@ async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size="1
         return await _md(event, "⚠️ 生图失败，积分已退还")
     b64 = str(items[0].get("b64_json") or "")
     url = str(items[0].get("url") or "")
-    content = f"🎨 生成完成「{prompt}」\n比例：{size}\n消耗：{draw_cost} 积分"
+    title = _first_line(f"生成完成「{prompt}」", 20)
+    content = f"🎨 {title}\n比例：{size}\n消耗：{draw_cost} 积分"
     if b64:
         try:
             import base64 as _b64
