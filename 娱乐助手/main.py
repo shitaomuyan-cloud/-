@@ -82,6 +82,27 @@ def _first_line(text, limit=20):
         return head[:limit].rstrip() + "…"
     return head
 
+# 生图互斥: 同一群同时只允许一个生图任务 (gid -> bool)
+_draw_busy: dict = {}
+_draw_busy_lock = threading.Lock()
+
+
+def _draw_acquire(gid) -> bool:
+    """尝试占用生图任务, 已被占用返回 False。"""
+    global _draw_busy
+    with _draw_busy_lock:
+        if _draw_busy.get(gid):
+            return False
+        _draw_busy[gid] = True
+        return True
+
+
+def _draw_release(gid):
+    global _draw_busy
+    with _draw_busy_lock:
+        _draw_busy.pop(gid, None)
+
+
 def _uid(event):
     uid = str(getattr(event, "user_id", "") or "")
     if uid:
@@ -837,10 +858,16 @@ async def cmd_draw(event, match):
         if not g.can_afford(uid, draw_cost):
             return await _md(event, f"⚠️ 积分不足\n生图需要 {_c(draw_cost)} 积分")
         return await _show_ratio_buttons(event, prompt, draw_cost)
-    # 已选比例 → 直接生成
-    if api_base and api_key:
-        return await _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size=size)
-    return await _draw_legacy(event, prompt, draw_cost, size=size)
+    # 已选比例 → 直接生成 (互斥: 同群同一时刻只允许一个生图任务)
+    gid = str(getattr(event, "group_id", "") or "")
+    if not _draw_acquire(gid):
+        return await _md(event, "⚠️ 该群已有生图任务进行中\n请等待完成后再试")
+    try:
+        if api_base and api_key:
+            return await _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size=size)
+        return await _draw_legacy(event, prompt, draw_cost, size=size)
+    finally:
+        _draw_release(gid)
 
 
 async def _show_ratio_buttons(event, prompt, draw_cost):
