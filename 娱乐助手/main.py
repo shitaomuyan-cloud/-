@@ -251,11 +251,71 @@ def _avatar(event, uid=None):
 
 
 def _prefix_at(event):
-    """返回 <@uid> 前缀 (QQ markdown 自动渲染为 @, bot 头像由消息头部自动显示)。"""
+    """返回「头像圆圈 + @」markdown 前缀, 一条气泡顶部带用户头像 + @提及。"""
     uid = str(getattr(event, "user_id", "") or "")
     if not uid:
         return ""
-    return f"<@{uid}>\n\n"
+    avatar = _avatar(event, uid)
+    return f"![avatar]({avatar}) <@{uid}>\n\n"
+
+
+async def _upload_drawn(event, image_bytes):
+    """上传生图 bytes 到 QQ 素材库获可访问 URL (供 markdown 消息内嵌图片)。"""
+    if not image_bytes:
+        return ""
+    sender = getattr(event, "sender", None) or getattr(event, "_sender", None)
+    if sender is None:
+        try:
+            from core.bot.manager import _bot_manager_ref
+            bot = _bot_manager_ref.get_bot(str(getattr(event, "appid", "") or ""))
+            sender = getattr(bot, "sender", None) if bot else None
+        except Exception:
+            sender = None
+    if sender is None:
+        return ""
+    try:
+        from core.message.media import _resolve_upload_ep, upload_media_bytes
+
+        gid = str(getattr(event, "group_id", "") or "") or None
+        uid = str(getattr(event, "user_id", "") or "") or None
+        endpoint = _resolve_upload_ep(group_id=gid, user_id=uid, event=event)
+        info = await upload_media_bytes(sender, image_bytes, 1, endpoint, file_name="draw.png", event=event)
+    except Exception as e:
+        log.warning("生图上传失败: %s", e)
+        return ""
+    if not info:
+        return ""
+    if isinstance(info, str):
+        return info
+    return info.get("file_info") or info.get("url") or info.get("file_url", "")
+
+
+async def _post_draw_one_message(event, prompt, draw_cost, size, image_bytes, fallback_url=""):
+    """生图完成: 一条 markdown 气泡含「头像+@+说明+图片」。
+    upload 失败时回退两条消息 (markdown 说明 + 单独图片)。"""
+    title = f"生成完成「{_first_line(prompt, 8)}」"
+    info = [f"比例：{size}", f"消耗：{draw_cost} 积分"]
+    md_text = f"🎨 {title}\n" + "\n".join(info)
+    file_url = await _upload_drawn(event, image_bytes)
+    if file_url:
+        # 一条 markdown 气泡: 头像+@ + 说明 + 内嵌图片
+        md = _prefix_at(event) + md_text + f"\n\n![draw #1024px #1024px]({file_url})"
+        try:
+            await event.reply(md)
+            return
+        except Exception as e:
+            log.warning("markdown 图文消息失败, 回退两条消息: %s", e)
+    # 回退: 两条消息 (说明 + 图片)
+    await _md(event, _prefix_at(event) + md_text)
+    if image_bytes:
+        try:
+            await event.reply_image(image_bytes)
+        except Exception:
+            if fallback_url:
+                try:
+                    await event.reply_image(fallback_url)
+                except Exception:
+                    pass
 
 
 async def _md(event, text, at=True):
@@ -946,12 +1006,13 @@ async def _draw_legacy(event, prompt, draw_cost, size=""):
     if size:
         info_lines.append(f"比例：{size}")
     info_lines.append(f"消耗：{draw_cost} 积分")
-    content = f"🎨 {title}\n" + "\n".join(info_lines)
+    md_text = f"🎨 {title}\n" + "\n".join(info_lines)
     try:
-        await _md(event, content)  # 先发 markdown 说明 (含头像+@)
-        await event.reply_image(url)  # 再发图 (无 content, bot 头像自动)
+        async with httpx.AsyncClient(timeout=30) as client:
+            img_bytes = (await client.get(url)).content
+        await _post_draw_one_message(event, prompt, draw_cost, size or "1024x1024", img_bytes, fallback_url=url)
     except Exception:
-        await _md(event, f"🎨 「{prompt}」\n{url}")
+        await _md(event, _prefix_at(event) + f"🎨 「{_first_line(prompt, 8)}」\n{url}")
 
 
 async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size="1024x1024"):
@@ -982,24 +1043,22 @@ async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size="1
     b64 = str(items[0].get("b64_json") or "")
     url = str(items[0].get("url") or "")
     title = f"生成完成「{_first_line(prompt, 8)}」"
-    content = _prefix_at(event) + f"🎨 {title}\n比例：{size}\n消耗：{draw_cost} 积分"
     if b64:
         try:
             import base64 as _b64
-
             img_bytes = _b64.b64decode(b64)
-            await _md(event, content)  # 先发 markdown 说明
-            await event.reply_image(img_bytes)  # 再发图
+            await _post_draw_one_message(event, prompt, draw_cost, size, img_bytes, fallback_url=url)
             return
         except Exception:
             pass
     if url.startswith("http"):
         try:
-            await _md(event, content)  # 先发 markdown 说明
-            await event.reply_image(url)  # 再发图
+            async with httpx.AsyncClient(timeout=30) as client:
+                img_bytes = (await client.get(url)).content
+            await _post_draw_one_message(event, prompt, draw_cost, size, img_bytes, fallback_url=url)
             return
         except Exception:
-            await _md(event, f"🎨 「{prompt}」\n{url}")
+            await _md(event, _prefix_at(event) + f"🎨 「{_first_line(prompt, 8)}」\n{url}")
             return
     g.refund(_uid(event), draw_cost)
     await _md(event, "⚠️ 生图失败，积分已退还")
