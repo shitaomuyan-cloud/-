@@ -291,34 +291,29 @@ def _parse_size(size: str):
 
 
 async def _post_draw_done(event, prompt, draw_cost, size, img_bytes, fallback_url=""):
-    """生图完成: 一条 markdown 气泡 = 头像 + @ + 说明 + 图片。
-    图床上传失败时回退两条消息 (说明 + 单独图片)。"""
-    title = f"生成完成「{_first_line(prompt, 8)}」"
-    lines = [f"🎨 {title}"]
+    """生图完成: 一条图片消息 (图片 + caption 文字 + <@uid>@提及),
+    bot 头像由消息头自动显示, caption 里 <@uid> 渲染为 @慕言 ↗."""
+    lines = [f"🎨 生成完成「{_first_line(prompt, 8)}」"]
     if size:
         lines.append(f"比例：{size}")
     lines.append(f"消耗：{draw_cost} 积分")
-    text = "\n".join(lines)
-    url = ""
+    caption = "\n".join(lines)
+    uid = str(getattr(event, "user_id", "") or "")
+    if uid:
+        caption = f"<@{uid}>\n{caption}"
     if img_bytes:
-        url = await _hosting_upload(event, img_bytes)
-    if url:
-        w, h = _parse_size(size)
-        md = _prefix_at(event) + text + f"\n\n![生图 #{w}px #{h}px]({url})"
         try:
-            await event.reply(md)
+            await event.reply_image(img_bytes, content=caption)
             return
         except Exception:
             pass
-    # 回退: 两条消息
-    await _md(event, _prefix_at(event) + text)
-    if img_bytes:
+    if fallback_url:
         try:
-            await event.reply_image(img_bytes)
+            await event.reply_image(fallback_url, content=caption)
+            return
         except Exception:
-            if fallback_url:
-                with contextlib.suppress(Exception):
-                    await event.reply_image(fallback_url)
+            pass
+    await _md(event, _prefix_at(event) + caption + (f"\n{fallback_url}" if fallback_url else "\n生图失败"))
 
 
 
