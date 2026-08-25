@@ -914,36 +914,53 @@ async def _show_ratio_buttons(event, prompt, draw_cost):
         await _md(event, f"🎨 当前框架不支持按钮, 请手动加比例参数:\n生图 {prompt} 1024x1024\n生图 {prompt} 1792x1024\n生图 {prompt} 1024x1792")
 
 
+async def _upload_catbox(img_bytes, proxy):
+    """上传图片到 catbox 永久图床, 返回公网 URL (QQ markdown 可下载转存); 失败返回空串。"""
+    if not img_bytes:
+        return ""
+    try:
+        kwargs = {"proxy": proxy} if proxy else {}
+        async with httpx.AsyncClient(timeout=60, **kwargs) as client:
+            resp = await client.post(
+                "https://catbox.moe/user/api.php",
+                data={"reqtype": "fileupload"},
+                files={"fileToUpload": ("draw.png", img_bytes, "image/png")},
+            )
+            if resp.status_code == 200:
+                url = resp.text.strip()
+                if url.startswith("http"):
+                    return url
+    except Exception as e:
+        log.warning("catbox 上传失败: %s", e)
+    return ""
+
+
+def _parse_size(size):
+    """'1920x1080' -> (1920, 1080); 解析失败返回 (1024, 1024)。"""
+    try:
+        w, _, h = str(size or "").partition("x")
+        return int(w.strip()), int(h.strip())
+    except Exception:
+        return 1024, 1024
+
+
 async def _post_draw_done(event, prompt, draw_cost, size, img_bytes, fallback_url=""):
-    """生图完成: 优先 ARK 模板卡片 — 一条气泡含 @提及 + 大图 + 说明文字 (QQ 原生渲染);
-    上传/发送失败时回退图片消息 (图片 + caption 纯文本)."""
+    """生图完成: 一条 markdown 气泡 = 圆形头像 + @提及 + 标题 + 图片 + 说明.
+    QQ 后台会下载转存公网图片 URL (catbox 永久链接可渲染); 上传失败时回退图片消息。"""
     title = f"🎨 生成完成「{_first_line(prompt, 8)}」"
     meta = "\n".join(filter(None, [f"比例：{size}" if size else "", f"消耗：{draw_cost} 积分"]))
-    uid = str(getattr(event, "user_id", "") or "")
-    file_info = ""
+    img_url = ""
     if img_bytes:
+        proxy = (entconfig.get_current().get("draw_proxy") or "").strip()
+        img_url = await _upload_catbox(img_bytes, proxy)
+    if img_url:
+        w, h = _parse_size(size)
+        md = _prefix_at(event) + title + f"\n\n![生图 #{w}px #{h}px]({img_url})\n\n" + meta
         try:
-            from core.message.media import _resolve_upload_ep, upload_media_bytes
-
-            sender = getattr(event, "sender", None)
-            if sender is not None:
-                gid = str(getattr(event, "group_id", "") or "") or None
-                endpoint = _resolve_upload_ep(group_id=gid, user_id=uid or None, event=event)
-                fi = await upload_media_bytes(sender, img_bytes, 1, endpoint, file_name="draw.png", event=event)
-                if isinstance(fi, str):
-                    file_info = fi
-                elif isinstance(fi, dict):
-                    file_info = str(fi.get("file_info") or fi.get("url") or "")
-        except Exception:
-            file_info = ""
-    if file_info:
-        try:
-            # ARK 模板 24: #DESC# #PROMPT# #TITLE# #METADESC# #IMG# #LINK# #SUBTITLE#
-            kv = (meta, f"<@{uid}>" if uid else "", title, "", file_info, "", "")
-            await event.reply_ark(24, kv)
+            await event.reply(md)
             return
         except Exception as e:
-            log.warning("ARK 发送失败, 回退图片消息: %s", e)
+            log.warning("markdown 图文消息失败, 回退图片消息: %s", e)
     # 回退: 图片消息
     caption = "\n".join(filter(None, [title, meta]))
     if img_bytes:
