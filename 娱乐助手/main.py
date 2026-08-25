@@ -19,13 +19,12 @@ from core.plugin.web_pages import register_page, unregister_page
 from .app import webpanel
 from .app import games as g
 from .app import points as p
-from .app import wzry
 
 __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分，含 Web 管理后台，积分按群独立",
-    "version": "2.4.0",
+    "version": "2.3.0",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -482,73 +481,11 @@ async def cmd_help(event, match):
         ("撤回", f"引用后发 花{g.REVOKE_COST}"),
         ("生图 描述", f"花{g.DRAW_COST}绘图"),
         ("加减积分 @对方 数量", "管理员"),
-        ("王者 营地ID/昵称", "王者荣耀营地查询"),
-        ("王者 战绩 营地ID", "查最近战绩"),
-        ("王者 英雄 英雄名", "查英雄信息"),
     ]
     lines = ["🎮 娱乐助手 · 指令", "", "| 指令 | 说明 |", "| :---: | :---: |"]
     for cmd, desc in rows:
         lines.append(f"| {cmd} | {desc} |")
     await _md(event, "\n".join(lines), at=False)
-
-
-@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*(王者|王者荣耀)\s*(.*)$", name="王者", desc="王者荣耀营地查询: 王者 营地ID/昵称 · 王者 战绩 营地ID · 王者 英雄 英雄名", priority=60, block=True, ignore_at_check=True)
-async def cmd_wzry(event, match):
-    arg = (match.group(2) or "").strip()
-    if not arg:
-        return await _md(event, (
-            "🎮 王者荣耀查询（远梦API）\n\n"
-            "`王者 营地ID` — 查主页信息\n"
-            "`王者 昵称` — 搜索营地用户\n"
-            "`王者 战绩 营地ID` — 查最近战绩\n"
-            "`王者 英雄 英雄名` — 查英雄信息\n\n"
-            "营地ID 是王者营地账号 ID（纯数字）"
-        ), at=False)
-    sub, _, rest = arg.partition(" ")
-    sub = sub.strip()
-    if sub in ("战绩", "战绩查询", "战报"):
-        return await _wzry_battles(event, rest.strip())
-    if sub in ("英雄", "英雄查询", "英雄信息"):
-        return await _wzry_hero(event, rest.strip())
-    if arg.isdigit():
-        return await _wzry_profile(event, arg)
-    return await _wzry_search(event, arg)
-
-
-async def _wzry_search(event, name):
-    if not name:
-        return await _md(event, "用法: `王者 昵称`（搜索营地用户）", at=False)
-    res = await wzry.search_user(name)
-    if not res["ok"]:
-        return await _md(event, f"⚠️ 查询失败: {res['error']}", at=False)
-    return await _md(event, wzry.format_search(res["data"]), at=False)
-
-
-async def _wzry_profile(event, camp_id):
-    if not camp_id:
-        return await _md(event, "用法: `王者 营地ID`（纯数字）", at=False)
-    res = await wzry.get_profile(camp_id)
-    if not res["ok"]:
-        return await _md(event, f"⚠️ 查询失败: {res['error']}", at=False)
-    return await _md(event, wzry.format_profile(res["data"]), at=False)
-
-
-async def _wzry_battles(event, camp_id):
-    if not camp_id:
-        return await _md(event, "用法: `王者 战绩 营地ID`（纯数字）", at=False)
-    res = await wzry.get_battles(camp_id)
-    if not res["ok"]:
-        return await _md(event, f"⚠️ 查询失败: {res['error']}", at=False)
-    return await _md(event, wzry.format_battles(res["data"]), at=False)
-
-
-async def _wzry_hero(event, hero_name):
-    if not hero_name:
-        return await _md(event, "用法: `王者 英雄 英雄名`，如 王者 英雄 鲁班七号", at=False)
-    res = await wzry.get_hero(hero_name)
-    if not res["ok"]:
-        return await _md(event, f"⚠️ 查询失败: {res['error']}", at=False)
-    return await _md(event, wzry.format_hero(res["data"]), at=False)
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*签到(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="签到", desc="每日签到, 得积分并显示头像", priority=60, block=True, ignore_at_check=True)
