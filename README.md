@@ -31,7 +31,7 @@ ElainaBot 娱乐助手插件（基于 [ElainaBot_v2](https://github.com/ElainaCo
 {
   "name": "娱乐助手",
   "type": "complete",
-  "author": "shitaomuyan-cloud",
+  "author": "慕言 慕北",
   "github": "https://github.com/shitaomuyan-cloud/-",
   "branch": "main",
   "path": "娱乐助手"
