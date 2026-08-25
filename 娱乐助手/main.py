@@ -849,7 +849,7 @@ async def _show_ratio_buttons(event, prompt, draw_cost):
         ],
         [
             {"text": "9:16 竖屏", "data": f"生图 {p_safe}|1024x1792", "reply": True},
-            {"text": "取消", "data": f"生图 {p_safe}|cancel", "reply": True},
+            {"text": "🖥 PC壁纸", "data": f"生图 {p_safe}|1920x1080", "reply": True},
         ],
     ]
     content = f"🎨 选择生图比例\n描述：「{prompt}」\n扣：{_c(draw_cost)} 积分"
