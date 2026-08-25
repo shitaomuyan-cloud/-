@@ -24,7 +24,7 @@ __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分，含 Web 管理后台，积分按群独立",
-    "version": "2.3.1",
+    "version": "2.4.0",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -54,6 +54,18 @@ def _identity(event) -> dict:
     if not qq.isdigit():
         qq = ""
     return {"qq": qq, "avatar": avatar}
+
+
+def _gid_handler(fn):
+    """命令装饰器: 入口设置群上下文 (积分/红包按群隔离)。"""
+    import functools
+
+    @functools.wraps(fn)
+    async def wrapper(event, match):
+        p.set_group(str(getattr(event, "group_id", "") or ""))
+        return await fn(event, match)
+
+    return wrapper
 
 
 def _uid(event):
@@ -463,6 +475,7 @@ async def _cleanup():
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*(娱乐帮助|娱乐菜单|娱乐指令)(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="娱乐帮助", desc="查看娱乐助手全部指令", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_help(event, match):
     rows = [
         ("签到", f"每日1次 得{g.SIGN_LO}~{g.SIGN_HI}"),
@@ -489,6 +502,7 @@ async def cmd_help(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*签到(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="签到", desc="每日签到, 得积分并显示头像", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_sign(event, match):
     gained, total, already = g.sign(_uid(event))
     if already:
@@ -498,6 +512,7 @@ async def cmd_sign(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*抽奖(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="抽奖", desc="花积分抽奖, 中积分 (每日5次, 30秒间隔)", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_lottery(event, match):
     if not await _limit_guard(event, "lottery", "抽奖", cooldown=0):
         return
@@ -511,6 +526,7 @@ async def cmd_lottery(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*我的(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="我的", desc="查看个人积分/反甲/排名/签到状态", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_me(event, match):
     uid = _uid(event)
     pts = p.get_points(uid)
@@ -526,6 +542,7 @@ async def cmd_me(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*(积分排行|排行|排行榜)(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="积分排行", desc="查看全群积分排行榜", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_rank(event, match):
     rows = p.top_list(10)
     if not rows:
@@ -543,6 +560,7 @@ async def cmd_rank(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*购买反甲(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="购买反甲", desc="花积分购买反甲护盾", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_armor(event, match):
     if not g.charge(_uid(event), g.ARMOR_COST):
         return await _md(event, f"⚠️ 积分不足\n反甲需要 {_c(g.ARMOR_COST)} 积分")
@@ -552,6 +570,7 @@ async def cmd_armor(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*抢劫(?=\s|$|<|@)", name="抢劫", desc="抢劫 @某人 (每日5次, 30秒间隔)", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_rob(event, match):
     target = _first_mention(event)
     if not target:
@@ -572,6 +591,7 @@ async def cmd_rob(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*同归于尽(?=\s|$|<|@)", name="同归于尽", desc="同归于尽 @对方 (每日5次, 30秒间隔)", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_boom(event, match):
     target = _first_mention(event)
     if not target:
@@ -588,6 +608,7 @@ async def cmd_boom(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*发红包(?=\s|$|<|@)", name="发红包", desc="发红包 总积分 份数 口令(1~4位数字), 顺序无所谓", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_send(event, match):
     nums = _all_numbers(event)
     if len(nums) < 3:
@@ -599,6 +620,7 @@ async def cmd_send(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*抢红包(?=\s|$|<|@)", name="抢红包", desc="抢红包 (可直接抢或带口令)", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_claim(event, match):
     uid = _uid(event)
     nums = _all_numbers(event)
@@ -614,6 +636,7 @@ async def cmd_claim(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*红包列表(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="红包列表", desc="查看可抢红包", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_packs(event, match):
     packs = g.list_redpacks()
     if not packs:
@@ -623,6 +646,7 @@ async def cmd_packs(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*禁言(?!菜单|列表)(?=\s|$|<|@)", name="禁言", desc="禁言 @对方 [分钟], 每分钟100积分, 默认1分钟", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_mute(event, match):
     target = _first_mention(event)
     if not target:
@@ -659,6 +683,7 @@ async def cmd_mute(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*撤回(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="撤回", desc="引用机器人消息后发送撤回, 扣积分", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_recall(event, match):
     uid = _uid(event)
     if not g.charge(uid, g.REVOKE_COST):
@@ -703,6 +728,7 @@ async def cmd_recall(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*单身狗(?=\s|$|<|@)", name="单身狗", desc="恶搞QQ头像生成单身狗配图", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_dog(event, match):
     target = _first_mention(event)
     nums = _all_numbers(event)
@@ -734,6 +760,7 @@ async def cmd_dog(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*马内(?=\s|$|<|@)", name="马内", desc="恶搞头像生成我想要马内求财配图", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_money(event, match):
     target = _first_mention(event)
     nums = _all_numbers(event)
@@ -765,6 +792,7 @@ async def cmd_money(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*生图(?=\s|$|<|@)", name="生图", desc="扣积分 百度绘图", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_draw(event, match):
     uid = _uid(event)
     prompt = _after_keyword(event, "生图")
@@ -807,6 +835,7 @@ async def cmd_draw(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*添加积分(?=\s|$|<|@)", name="添加积分", desc="管理员给 @对方 加积分", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_add(event, match):
     uid = _uid(event)
     if not await _is_admin(event):
@@ -822,6 +851,7 @@ async def cmd_add(event, match):
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*删除积分(?=\s|$|<|@)", name="删除积分", desc="管理员给 @对方 扣积分", priority=60, block=True, ignore_at_check=True)
+@_gid_handler
 async def cmd_sub(event, match):
     uid = _uid(event)
     if not await _is_admin(event):

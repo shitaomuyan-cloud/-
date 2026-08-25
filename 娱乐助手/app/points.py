@@ -1,5 +1,11 @@
-"""积分核心逻辑: JSON 数据存储 + 账户/装备/盗窃/同归操作。"""
+"""积分核心逻辑: 按群独立存储 (JSON 文件持久化)。
 
+数据格式: {gid: {uid: {points, robbed, armor, ...}}, "_meta": {...}}
+群上下文: 通过 contextvars 传递, 由 main.py 在每个命令入口设置 p.set_group(gid)。
+旧版全局数据 ( {uid: user} ) 会自动迁移到 "__legacy__" 群, 并由第一个使用插件的群继承。
+"""
+
+import contextvars
 import json
 import os
 import random
@@ -17,6 +23,47 @@ _DATA_FILE = _PLUGIN_DIR / "data" / "points.json"
 _lock = threading.RLock()
 _cache = None
 
+# 群上下文 (asyncio 协程级隔离)
+_current_gid: "contextvars.ContextVar[str]" = contextvars.ContextVar("ent_gid", default="")
+
+
+def set_group(gid):
+    """设置当前命令所属的群 (每个 handler 入口调用一次)。"""
+    _current_gid.set(str(gid or ""))
+
+
+def _gid() -> str:
+    gid = _current_gid.get()
+    return gid or "_no_group"
+
+
+def _migrate(raw: dict) -> dict:
+    """旧格式 {uid: user} → 新格式 {gid: {uid: user}}。
+
+    检测: 顶层任一 value 是包含 'points' 的用户字典 → 旧格式。
+    迁移结果放入 "__legacy__" 群, 首群使用时继承。
+    """
+    if not raw:
+        return {}
+    legacy = False
+    for k, v in raw.items():
+        if k == "_meta":
+            continue
+        if isinstance(v, dict) and "points" in v:
+            legacy = True
+            break
+    if not legacy:
+        return raw
+    new: dict = {}
+    for k, v in raw.items():
+        if k == "_meta":
+            new["_meta"] = v
+        else:
+            new.setdefault("__legacy__", {})[k] = v
+    if not new.get("__legacy__"):
+        new.pop("__legacy__", None)
+    return new
+
 
 def _load() -> dict:
     global _cache
@@ -26,7 +73,10 @@ def _load() -> dict:
         if _DATA_FILE.exists():
             try:
                 with open(_DATA_FILE, "r", encoding="utf-8") as f:
-                    _cache = json.load(f)
+                    _cache = _migrate(json.load(f))
+                # 若发生迁移, 立即落盘
+                if "__legacy__" in (_cache or {}):
+                    _save_locked()
             except Exception as e:  # noqa: BLE001
                 log.warning("读取积分数据失败, 重建: %s", e)
                 _cache = {}
@@ -35,24 +85,48 @@ def _load() -> dict:
         return _cache
 
 
+def _save_locked():
+    """在持锁状态下写盘。"""
+    if _cache is None:
+        return
+    _DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _DATA_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(_cache, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _DATA_FILE)
+
+
 def _save():
     with _lock:
-        if _cache is None:
-            return
-        _DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _DATA_FILE.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(_cache, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, _DATA_FILE)
+        _save_locked()
 
 
-def _ensure(user_id) -> dict:
-    uid = str(user_id)
+def _gid_store(gid=None):
+    """返回该群的用户字典; 不存在时创建 (并继承 __legacy__ 旧数据)。"""
+    gid = str(gid if gid is not None else _gid())
+    if not gid or gid == "_meta":
+        gid = "_no_group"
     data = _load()
-    user = data.get(uid)
+    store = data.get(gid)
+    if store is None:
+        if gid != "__legacy__" and isinstance(data.get("__legacy__"), dict):
+            # 首群继承旧全局数据
+            store = data.pop("__legacy__")
+            data[gid] = store
+        else:
+            store = {}
+            data[gid] = store
+        _save()
+    return store
+
+
+def _ensure(user_id, gid=None) -> dict:
+    uid = str(user_id)
+    store = _gid_store(gid)
+    user = store.get(uid)
     if user is None:
         user = {"points": 0, "robbed": 0, "armor": 0, "last_sign": "", "nickname": "", "appid": "", "qq": "", "avatar": ""}
-        data[uid] = user
+        store[uid] = user
         _save()
     else:
         # 兼容旧数据：补充 robbed 字段（通过抢劫持有的积分）
@@ -135,9 +209,9 @@ def settle_mutual(initiator_id, target_id):
     返回 (deducted, initiator_total, target_total, ok)。
     """
     with _lock:
-        data = _load()
-        iu = data.get(str(initiator_id))
-        tu = data.get(str(target_id))
+        store = _gid_store()
+        iu = store.get(str(initiator_id))
+        tu = store.get(str(target_id))
         if not iu or not tu:
             return 0, 0, 0, False
         i_pts = int(iu.get("points", 0))
@@ -203,10 +277,10 @@ def remove_user(user_id) -> bool:
     """删除用户积分记录，若存在则移除并保存。返回是否删除了。"""
     global _cache
     with _lock:
-        data = _load()
+        store = _gid_store()
         uid = str(user_id)
-        if uid in data and str(uid) != "_meta":
-            del data[uid]
+        if uid in store and str(uid) != "_meta":
+            del store[uid]
             _save()
             return True
         return False
@@ -237,13 +311,25 @@ def today_sign_key() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def all_users() -> dict:
-    return _load()
+def list_groups() -> list:
+    """返回所有有数据的群 id (用于 Web 面板群选择器)。"""
+    data = _load()
+    return [str(k) for k in data if k != "_meta"]
 
 
-def top_list(limit: int = 10):
+def group_user_count(gid: str) -> int:
+    store = _load().get(str(gid)) or {}
+    return len([k for k in store if k != "_meta"])
+
+
+def all_users(gid=None) -> dict:
+    return dict(_gid_store(gid))
+
+
+def top_list(limit: int = 10, gid=None):
+    store = _gid_store(gid)
     users = []
-    for uid, user in _load().items():
+    for uid, user in store.items():
         if str(uid) in ("_meta",):
             continue
         users.append(

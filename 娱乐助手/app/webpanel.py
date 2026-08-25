@@ -10,6 +10,7 @@ from core.plugin.web_pages import register_route
 
 from . import games as g
 from . import points as p
+from . import redpack_store as rs
 
 log = get_logger(PLUGIN, "娱乐助手面板")
 
@@ -92,6 +93,13 @@ async def _asset(request):
     return web.FileResponse(path, headers={"Cache-Control": "no-cache", "Content-Type": content_type})
 
 
+def _resolve_gid(request):
+    """从 query 中取群 id 并设置群上下文; 未传时使用默认空群。"""
+    gid = str(request.query.get("gid", "") or "").strip()
+    p.set_group(gid)
+    return gid
+
+
 def register_routes():
     global _registered
     if _registered:
@@ -107,6 +115,7 @@ def register_routes():
         ("GET", "config", _api_config, True),
         ("POST", "config", _api_save_config, True),
         ("GET", "redpacks", _api_redpacks, True),
+        ("GET", "groups", _api_groups, True),
     ]
     for method, path, handler, auth in routes:
         register_route(method, f"{PREFIX}/{path}", handler, auth=auth)
@@ -135,6 +144,7 @@ def _avatar_url(uid, user_data=None):
 
 
 async def _api_users(request):
+    gid = _resolve_gid(request)
     try:
         all_users = p.all_users()
     except Exception:
@@ -161,6 +171,7 @@ async def _api_users(request):
 
 
 async def _api_user(request):
+    gid = _resolve_gid(request)
 
     uid = request.query.get("user_id", "")
     if not uid:
@@ -179,6 +190,7 @@ async def _api_user(request):
 
 
 async def _api_set_points(request):
+    gid = _resolve_gid(request)
 
     try:
         body = await request.json()
@@ -193,6 +205,7 @@ async def _api_set_points(request):
 
 
 async def _api_add_points(request):
+    gid = _resolve_gid(request)
 
     try:
         body = await request.json()
@@ -209,6 +222,7 @@ async def _api_add_points(request):
 
 
 async def _api_sub_points(request):
+    gid = _resolve_gid(request)
 
     try:
         body = await request.json()
@@ -227,6 +241,7 @@ async def _api_sub_points(request):
 
 
 async def _api_delete_user(request):
+    gid = _resolve_gid(request)
     try:
         body = await request.json()
     except Exception:
@@ -241,6 +256,7 @@ async def _api_delete_user(request):
 
 
 async def _api_set_qq(request):
+    gid = _resolve_gid(request)
 
     try:
         body = await request.json()
@@ -271,7 +287,25 @@ async def _api_save_config(request):
     return web.json_response({"success": True, "data": load_config()})
 
 
+async def _api_groups(request):
+    """返回所有有数据的群 id 列表 (Web 群选择器用)。"""
+    gids = set()
+    for gid in p.list_groups():
+        gids.add(str(gid))
+    for gid in rs.list_groups():
+        gids.add(str(gid))
+    data = []
+    for gid in sorted(gids):
+        data.append({
+            "id": gid,
+            "users": p.group_user_count(gid),
+            "legacy": gid == "__legacy__",
+        })
+    return web.json_response({"success": True, "data": data})
+
+
 async def _api_redpacks(request):
+    gid = _resolve_gid(request)
     packs = g.list_redpacks()
     data = []
     for x in packs:

@@ -36,6 +36,8 @@ body{font-family:"PingFang SC","Microsoft YaHei",-apple-system,Segoe UI,Roboto,s
 .topbar h1{font-size:18px;font-weight:600;flex:1}
 .icon-btn{width:38px;height:38px;border:1px solid var(--border);background:#fff;border-radius:10px;cursor:pointer;color:var(--muted);font-size:16px;display:none;align-items:center;justify-content:center}
 .btn,.top-actions .btn{padding:9px 16px;border:1px solid var(--border);background:#fff;border-radius:10px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text);transition:.18s}
+.gid-select{padding:8px 12px;border:1px solid var(--border);background:#fff;border-radius:10px;font-size:13px;font-weight:600;color:var(--text);max-width:220px;cursor:pointer;outline:none}
+.gid-select:focus{border-color:var(--primary)}
 .btn:hover{border-color:var(--primary);color:var(--primary)}
 .btn.primary{background:linear-gradient(135deg,var(--primary),var(--primary-2));color:#fff;border:0;box-shadow:0 6px 16px rgba(91,124,250,.35)}
 .btn.primary:hover{opacity:.9;color:#fff}
