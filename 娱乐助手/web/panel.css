@@ -155,12 +155,12 @@ body{font-family:"PingFang SC","Microsoft YaHei",-apple-system,Segoe UI,Roboto,s
   .content{padding:16px}
   .metrics{grid-template-columns:1fr 1fr}
 }
-/* ===== 底部导航栏 (替代侧边栏) ===== */
-.bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:100;display:flex;background:#fff;border-top:1px solid var(--border);padding:6px 4px calc(6px + env(safe-area-inset-bottom));box-shadow:0 -4px 20px rgba(0,0,0,.06)}
+/* ===== 底部导航栏 (悬浮圆角玻璃卡片, 距底部 30px) ===== */
+.bottom-nav{position:fixed;left:14px;right:14px;bottom:30px;z-index:100;display:flex;background:rgba(255,255,255,.72);backdrop-filter:blur(20px) saturate(1.5);-webkit-backdrop-filter:blur(20px) saturate(1.5);border:1px solid rgba(255,255,255,.55);border-radius:24px;padding:8px 6px calc(8px + env(safe-area-inset-bottom));box-shadow:0 12px 32px rgba(30,40,80,.14),0 3px 10px rgba(30,40,80,.08)}
 .bottom-nav button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0;background:none;border:0;cursor:pointer;color:var(--text-2,#8a93a6);font-size:11px;font-weight:600;transition:.18s}
 .bottom-nav button i{width:22px;height:22px;display:flex;align-items:center;justify-content:center}
 .bottom-nav button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .bottom-nav button.active{color:var(--primary)}
 .bottom-nav button.active i{transform:translateY(-1px)}
-.workspace{padding-bottom:74px}
-@media(min-width:900px){.bottom-nav{max-width:520px;left:50%;transform:translateX(-50%);border-radius:16px 16px 0 0;border-left:1px solid var(--border);border-right:1px solid var(--border)}}
+.workspace{padding-bottom:118px}
+@media(min-width:900px){.bottom-nav{max-width:520px;left:50%;right:auto;transform:translateX(-50%)}}
