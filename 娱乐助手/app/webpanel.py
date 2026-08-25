@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
+import yaml
 from aiohttp import web
 from core.base.logger import get_logger, PLUGIN
 from core.plugin.web_pages import register_route
@@ -94,6 +96,8 @@ def register_routes():
         ("POST", "config", _api_save_config, True),
         ("GET", "redpacks", _api_redpacks, True),
         ("GET", "groups", _api_groups, True),
+        ("GET", "hosting", _api_hosting, True),
+        ("POST", "hosting", _api_save_hosting, True),
     ]
     for method, path, handler, auth in routes:
         register_route(method, f"{PREFIX}/{path}", handler, auth=auth)
@@ -352,6 +356,64 @@ async def _api_groups(request):
     # 排序: 有数据的优先, 然后按群名
     data.sort(key=lambda x: (0 if x["users"] > 0 else 1, x.get("name") or x["id"]))
     return web.json_response({"success": True, "data": data})
+
+
+_BOT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_HOSTING_YAML = os.path.join(_BOT_ROOT, "modules", "image_hosting", "data", "config.yaml")
+
+
+def _hosting_cfg() -> dict:
+    """读取图床配置 yaml。"""
+    if not os.path.isfile(_HOSTING_YAML):
+        return {}
+    with open(_HOSTING_YAML, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _coerce_value(current, value):
+    """按原配置字段类型转换前端提交的值。"""
+    if isinstance(current, bool):
+        return bool(value)
+    if isinstance(current, int):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return current
+    if isinstance(current, float):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return current
+    return str(value or "")
+
+
+async def _api_hosting(request):
+    """GET: 返回图床全部配置。"""
+    try:
+        return web.json_response({"success": True, "data": _hosting_cfg()})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def _api_save_hosting(request):
+    """POST: body = {bed: {field: value}} 合并写回图床配置 yaml。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "invalid json"}, status=400)
+    try:
+        data = _hosting_cfg()
+        for bed, vals in (body or {}).items():
+            if bed not in data or not isinstance(vals, dict):
+                continue
+            for k, v in vals.items():
+                if k in data[bed]:
+                    data[bed][k] = _coerce_value(data[bed][k], v)
+        with open(_HOSTING_YAML, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        return web.json_response({"success": True, "data": data})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
 async def _api_redpacks(request):

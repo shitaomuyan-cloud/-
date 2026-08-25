@@ -42,6 +42,11 @@
 
         <!-- 配置 -->
                 <section class="page" id="page-config">
+          <nav class="cfg-nav">
+            <button class="active" data-cfg-tab="rules" type="button">规则配置</button>
+            <button data-cfg-tab="hosting" type="button">图床配置</button>
+          </nav>
+          <div id="cfg-rules">
           <section class="panel">
             <div class="panel-head"><div><h2>签到</h2><p>每日签到随机奖励</p></div></div>
             <div class="panel-body rules-form">
@@ -85,6 +90,14 @@
             </div>
           </section>
 <div class="actions-bar"><button class="btn primary" id="save-config" type="button">保存全部配置</button></div>
+          </div>
+          <div id="cfg-hosting" hidden>
+            <section class="panel">
+              <div class="panel-head"><div><h2>图床配置</h2><p>image_hosting 各图床开关与凭据 · 保存后需重启机器人生效</p></div><button class="btn" id="hosting-refresh" type="button">刷新</button></div>
+              <div class="panel-body" id="hosting-form"></div>
+            </section>
+            <div class="actions-bar"><button class="btn primary" id="save-hosting" type="button">保存图床配置</button></div>
+          </div>
         </section>
 
         <!-- 积分 -->
