@@ -1115,18 +1115,18 @@ async def cmd_draw(event, match):
     if not _draw_acquire(gid):
         g.refund(uid, draw_cost)
         return await _md(event, "⚠️ 该群已有生图任务进行中\n请等待完成后再试")
-    # 安全审核 (本地敏感词, 命中违规描述拦截避免 QQ 风控)
-    if cfg.get("draw_safety_enabled", True):
-        safety = await _draw_safety_check(prompt)
-        if safety.get("flagged"):
-            g.refund(uid, draw_cost)
-            hit = safety.get("hit") or safety.get("raw", "")[:20]
-            src_name = safety.get("source", "审核")
-            log.warning("生图描述被安全审核拦截 [%s] hit=%s: %s", src_name, hit, prompt[:50])
-            return await _md(event, f"⚠️ 描述未通过内容安全审核 (命中: {hit})\n请换一种安全、合规的表达 (积分已退还)")
-        if not safety.get("available"):
-            log.info("生图安全审核不可用, 放行: %s", safety)
     try:
+        # 安全审核 (本地敏感词, 命中违规描述拦截避免 QQ 风控)
+        if cfg.get("draw_safety_enabled", True):
+            safety = await _draw_safety_check(prompt)
+            if safety.get("flagged"):
+                g.refund(uid, draw_cost)
+                hit = safety.get("hit") or safety.get("raw", "")[:20]
+                src_name = safety.get("source", "审核")
+                log.warning("生图描述被安全审核拦截 [%s] hit=%s: %s", src_name, hit, prompt[:50])
+                return await _md(event, f"⚠️ 描述未通过内容安全审核 (命中: {hit})\n请换一种安全、合规的表达 (积分已退还)")
+            if not safety.get("available"):
+                log.info("生图安全审核不可用, 放行: %s", safety)
         if api_base and api_key:
             return await _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size=size)
         return await _draw_legacy(event, prompt, draw_cost, size=size)
