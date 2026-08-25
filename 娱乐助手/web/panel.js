@@ -45,101 +45,24 @@ function renderPacks(list){const el=document.getElementById("redpack-list");if(!
 function saveConfig(){const cfg={};for(const k in CFG_MAP){const e=document.getElementById(CFG_MAP[k]);if(!e)continue;if(CFG_TEXT.has(k)){cfg[k]=e.value.trim();continue;}let v=parseFloat(e.value);if(k.indexOf("rate")>=0)v=v/100;else if(v||v===0)v=Math.round(v);cfg[k]=v;}const btn=document.getElementById("save-config");if(btn)btn.disabled=true;api("POST","config",cfg).then(()=>{toast("配置已保存","ok");loadConfig();}).catch(e=>errToast(e)).finally(()=>{if(btn)btn.disabled=false;});}
 function init(){bindNav();bindSidebar();bindSearch();renderCommands();switchPage("overview");loadGroups();loadUsers();loadConfig();loadPacks();const sc=document.getElementById("save-config");if(sc)sc.onclick=saveConfig;const rb=document.getElementById("refresh-btn");if(rb)rb.onclick=()=>{loadUsers();loadConfig();loadPacks();toast("已刷新","ok");};bindCfgTabs();}
 
-// ==================== 图床配置 ====================
-const HOSTING_META = {
-  chevereto:{name:'Chevereto / PicGo 图床',desc:'自建或公共 Chevereto 图床',fields:{
-    enabled:{l:'启用',t:'bool'},api_url:{l:'API 地址',t:'text'},api_key:{l:'API Key',t:'password'},max_file_size:{l:'最大大小(字节)',t:'number'}}},
-  qq_file:{name:'QQ 分片文件图床',desc:'官方分片上传, COS 直链 (有时效)',fields:{
-    enabled:{l:'启用',t:'bool'},target_type:{l:'作用域类型',t:'text'},target_id:{l:'目标ID',t:'text'}}},
-  cos:{name:'腾讯云 COS',desc:'推荐: 永久公网链接, QQ 必加载',fields:{
-    enabled:{l:'启用',t:'bool'},region:{l:'地域',t:'text'},secret_id:{l:'SecretId',t:'text'},secret_key:{l:'SecretKey',t:'password'},bucket_name:{l:'存储桶',t:'text'},domain:{l:'自定义域名',t:'text'},upload_path_prefix:{l:'路径前缀',t:'text'},max_file_size:{l:'最大大小(字节)',t:'number'}}},
-  self_hosted:{name:'自身图床',desc:'复用框架 HTTP 服务公开读取',fields:{
-    enabled:{l:'启用',t:'bool'},public_base_url:{l:'公开地址',t:'text'},storage_dir:{l:'存储目录',t:'text'},max_file_size:{l:'最大大小(字节)',t:'number'},permanent_cache:{l:'永久缓存',t:'bool'}}},
-  cnb:{name:'CNB 图床',desc:'CNB 代码托管平台',fields:{
-    enabled:{l:'启用',t:'bool'},repo:{l:'仓库',t:'text'},token:{l:'Token',t:'password'},max_file_size:{l:'最大大小(字节)',t:'number'},verify_public_url:{l:'校验公网URL',t:'bool'},timeout:{l:'超时(秒)',t:'number'}}},
-  bilibili:{name:'B站图床',desc:'需 B 站 Cookie 凭据',fields:{
-    enabled:{l:'启用',t:'bool'},csrf_token:{l:'CSRF Token',t:'password'},sessdata:{l:'SESSDATA',t:'password'},bucket:{l:'Bucket',t:'text'}}},
-  qq_channel:{name:'QQ 频道图床',desc:'QQ 频道文件',fields:{
-    enabled:{l:'启用',t:'bool'},channel_id:{l:'频道ID',t:'text'}}},
-  nature:{name:'Nature 图床',desc:'腾讯 COS 直传, 临时可用',fields:{enabled:{l:'启用',t:'bool'}}},
-  chatglm:{name:'智谱 ChatGLM 图床',desc:'免费无需配置',fields:{enabled:{l:'启用',t:'bool'}}},
-  xingye:{name:'星野图床',desc:'免费无需配置',fields:{enabled:{l:'启用',t:'bool'}}},
-};
 
-let hostingLoaded = false;
-
-function renderHostingForm(data){
-  const box = document.getElementById('hosting-form');
-  if(!box) return;
-  box.innerHTML = '';
-  const beds = Object.keys(data).filter(k => data[k] && typeof data[k] === 'object');
-  if(!beds.length){ box.innerHTML = '<p class="hint">未找到图床配置</p>'; return; }
-  beds.forEach(bed => {
-    const meta = HOSTING_META[bed] || {name:bed, desc:'', fields:{}};
-    const cfg = data[bed] || {};
-    const sec = document.createElement('section');
-    sec.className = 'panel';
-    const head = document.createElement('div');
-    head.className = 'panel-head';
-    head.innerHTML = '<div><h2>' + (meta.name || bed) + '</h2><p>' + (meta.desc || '') + '</p></div>' +
-      '<span class="hosting-badge ' + (cfg.enabled ? 'on' : 'off') + '">' + (cfg.enabled ? '已启用' : '未启用') + '</span>';
-    sec.appendChild(head);
-    const body = document.createElement('div');
-    body.className = 'panel-body rules-form';
-    const fieldKeys = Object.keys(meta.fields).filter(k => k in cfg);
-    if(!fieldKeys.length){
-      Object.keys(cfg).forEach(k => { meta.fields[k] = {l:k, t: 'text'}; });
-    }
-    Object.keys(meta.fields).forEach(k => {
-      if(!(k in cfg)) return;
-      const f = meta.fields[k];
-      const wrap = document.createElement('div');
-      wrap.className = 'field';
-      if(f.t === 'bool'){
-        wrap.innerHTML = '<label class="switch-line"><input type="checkbox" id="host-'+bed+'-'+k+'" ' + (cfg[k]?'checked':'') + '><span>' + (f.l||k) + '</span></label>';
-      } else {
-        const type = f.t === 'password' ? 'password' : (f.t === 'number' ? 'number' : 'text');
-        wrap.innerHTML = '<label>' + (f.l||k) + ' <em>'+k+'</em></label><input id="host-'+bed+'-'+k+'" type="' + type + '" value="' + String(cfg[k] ?? '').replace(/"/g,'&quot;') + '">';
-      }
-      body.appendChild(wrap);
-    });
-    sec.appendChild(body);
-    box.appendChild(sec);
-  });
-}
-
-async function loadHosting(){
+// ==================== 配置页悬浮导航 (规则/生图) ====================
+async function saveDrawConfig(){
+  // 只提交生图相关字段 (draw_*), 不动规则配置
+  const cfg = {};
+  for(const k in CFG_MAP){
+    if(!k.startsWith('draw_')) continue;
+    const e = document.getElementById(CFG_MAP[k]);
+    if(!e) continue;
+    if(CFG_TEXT.has(k)){ cfg[k] = e.value.trim(); continue; }
+    let v = parseFloat(e.value);
+    if(k.indexOf('rate') >= 0) v = v/100;
+    else if(v || v === 0) v = Math.round(v);
+    cfg[k] = v;
+  }
   try{
-    const r = await api('GET', 'hosting');
-    renderHostingForm(r.data || {});
-    hostingLoaded = true;
-  }catch(e){ errToast(e); }
-}
-
-async function saveHosting(){
-  const body = {};
-  const form = document.getElementById('hosting-form');
-  if(!form) return;
-  form.querySelectorAll('.panel').forEach(sec => {
-    // 从 input id 反推 bed/field
-    const inputs = sec.querySelectorAll('input');
-    if(!inputs.length) return;
-    const first = inputs[0];
-    const parts = first.id.split('-'); // host-{bed}-{field}
-    if(parts.length < 3) return;
-    const bed = parts.slice(1, -1).join('-'); // bed 名可能含连字符
-    const cfgObj = body[bed] = {};
-    inputs.forEach(inp => {
-      const parts2 = inp.id.split('-');
-      const field = parts2.slice(1).join('-');
-      if(inp.type === 'checkbox'){ cfgObj[field] = inp.checked; }
-      else { cfgObj[field] = inp.value; }
-    });
-  });
-  try{
-    const r = await api('POST', 'hosting', body);
-    toast('图床配置已保存（重启后生效）', 'ok');
-    renderHostingForm(r.data || {});
+    const r = await api('POST', 'config', cfg);
+    toast('生图配置已保存', 'ok');
   }catch(e){ errToast(e); }
 }
 
@@ -154,11 +77,8 @@ function bindCfgTabs(){
       const hostingEl = document.getElementById('cfg-hosting');
       if(rulesEl) rulesEl.hidden = (tab !== 'rules');
       if(hostingEl) hostingEl.hidden = (tab !== 'hosting');
-      if(tab === 'hosting' && !hostingLoaded) loadHosting();
     };
   });
-  const rf = document.getElementById('hosting-refresh');
-  if(rf) rf.onclick = () => { hostingLoaded = false; loadHosting(); };
-  const sh = document.getElementById('save-hosting');
-  if(sh) sh.onclick = saveHosting;
+  const sd = document.getElementById('save-draw-config');
+  if(sd) sd.onclick = saveDrawConfig;
 }
