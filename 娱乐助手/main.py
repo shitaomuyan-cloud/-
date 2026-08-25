@@ -795,20 +795,30 @@ async def cmd_money(event, match):
         await _md(event, "💰 「我想要马内」配图已生成")
 
 
-@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*生图(?=\s|$|<|@)", name="生图", desc="扣积分 百度绘图", priority=60, block=True, ignore_at_check=True)
+@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*生图(?=\s|$|<|@)", name="生图", desc="扣积分 AI绘图", priority=60, block=True, ignore_at_check=True)
 @_gid_handler
 async def cmd_draw(event, match):
     uid = _uid(event)
     prompt = _after_keyword(event, "生图")
     if not prompt:
         return await _md(event, "🎨 请附上绘图描述\n例：生图 一只猫咪")
-    if not g.charge(uid, g.DRAW_COST):
-        return await _md(event, f"⚠️ 积分不足\n生图需要 {_c(g.DRAW_COST)} 积分")
-    await _md(event, f"🎨 正在生成「{prompt}」…")
+    cfg = entconfig.get_current()
+    draw_cost = int(cfg.get("draw_cost", 50))
+    if not g.charge(uid, draw_cost):
+        return await _md(event, f"⚠️ 积分不足\n生图需要 {_c(draw_cost)} 积分")
+    api_base = (cfg.get("draw_api_base") or "").strip()
+    api_key = (cfg.get("draw_api_key") or "").strip()
+    if api_base and api_key:
+        return await _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key)
+    # 未配置自定义接口 → 回退内置绘图接口 (保证其他用户开箱即用)
+    return await _draw_legacy(event, prompt, draw_cost)
+
+
+async def _draw_legacy(event, prompt, draw_cost):
+    """内置绘图接口 (百度绘图, 兼容旧行为)。"""
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.get(_DRAW_API, params={"keyword": prompt})
-            # 该接口 content-type 是 text/html, 但 body 实为 JSON, 始终尝试解析
             try:
                 data = resp.json()
             except Exception:
@@ -817,9 +827,8 @@ async def cmd_draw(event, match):
                 except Exception:
                     data = resp.text
     except Exception as e:
-        g.refund(uid, g.DRAW_COST)
+        g.refund(_uid(event), draw_cost)
         return await _md(event, f"⚠️ 生图服务异常：{e}（积分已退还）")
-    # 提取图片地址：兼容「单 URL」与「data 为图片数组」两种返回
     url = ""
     if isinstance(data, dict):
         raw = data.get("url") or data.get("image") or data.get("img") or data.get("data") or ""
@@ -829,13 +838,58 @@ async def cmd_draw(event, match):
     elif isinstance(data, str):
         url = data.strip()
     if not url.startswith("http"):
-        g.refund(uid, g.DRAW_COST)
+        g.refund(_uid(event), draw_cost)
         return await _md(event, "⚠️ 生图失败，积分已退还")
-    content = f"🎨 生成完成「{prompt}」\n消耗：{g.DRAW_COST} 积分"
+    content = f"🎨 生成完成「{prompt}」\n消耗：{draw_cost} 积分"
     try:
         await event.reply_image(url, content=content)
     except Exception:
         await _md(event, f"🎨 「{prompt}」\n{url}")
+
+
+async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key):
+    """OpenAI 兼容生图接口 (配置在 Web 面板「生图服务」)。"""
+    model = (cfg.get("draw_model") or "").strip() or "gpt-image-2"
+    proxy = (cfg.get("draw_proxy") or "").strip()
+    await _md(event, f"🎨 正在生成「{prompt}」…")
+    try:
+        kwargs = {"proxy": proxy} if proxy else {}
+        async with httpx.AsyncClient(timeout=120, **kwargs) as client:
+            resp = await client.post(
+                f"{api_base.rstrip('/')}/images/generations",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={"model": model, "prompt": prompt, "n": 1, "size": "1024x1024"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        g.refund(_uid(event), draw_cost)
+        return await _md(event, f"⚠️ 生图服务异常：{e}（积分已退还）")
+    items = (data.get("data") or []) if isinstance(data, dict) else []
+    if not items:
+        g.refund(_uid(event), draw_cost)
+        return await _md(event, "⚠️ 生图失败，积分已退还")
+    b64 = str(items[0].get("b64_json") or "")
+    url = str(items[0].get("url") or "")
+    content = f"🎨 生成完成「{prompt}」\n消耗：{draw_cost} 积分"
+    if b64:
+        try:
+            import base64 as _b64
+
+            img_bytes = _b64.b64decode(b64)
+            await event.reply_image(img_bytes, content=content)
+            return
+        except Exception:
+            pass
+    if url.startswith("http"):
+        try:
+            await event.reply_image(url, content=content)
+            return
+        except Exception:
+            await _md(event, f"🎨 「{prompt}」\n{url}")
+            return
+    g.refund(_uid(event), draw_cost)
+    await _md(event, "⚠️ 生图失败，积分已退还")
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*添加积分(?=\s|$|<|@)", name="添加积分", desc="管理员给 @对方 加积分", priority=60, block=True, ignore_at_check=True)

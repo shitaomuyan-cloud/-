@@ -33,6 +33,11 @@ DEFAULTS = {
     "revoke_cost": 50,
     "draw_cost": 50,
     "armor_cost": 100,
+    # 生图服务 (OpenAI 兼容接口; 密钥/代理仅存本地 data/ 配置, 不进仓库)
+    "draw_api_base": "",
+    "draw_api_key": "",
+    "draw_model": "gpt-image-2",
+    "draw_proxy": "",
 }
 
 

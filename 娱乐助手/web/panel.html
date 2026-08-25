@@ -41,21 +41,21 @@
         </section>
 
         <!-- 配置 -->
-        <section class="page" id="page-config">
+                <section class="page" id="page-config">
           <section class="panel">
-            <div class="panel-head"><div><h2>积分获取</h2><p>每日签到与抽奖奖励区间</p></div></div>
+            <div class="panel-head"><div><h2>签到</h2><p>每日签到随机奖励</p></div></div>
             <div class="panel-body rules-form">
               <div class="field"><label>签到下限 <em>sign_lo</em></label><input id="cfg-sign-lo" type="number"><p class="hint">每日签到随机获得积分下限</p></div>
               <div class="field"><label>签到上限 <em>sign_hi</em></label><input id="cfg-sign-hi" type="number"><p class="hint">每日签到随机获得积分上限</p></div>
-              <div class="field"><label>抽奖奖品下限 <em>lottery_lo</em></label><input id="cfg-lottery-lo" type="number"><p class="hint">中奖后随机返还下限</p></div>
-              <div class="field"><label>抽奖奖品上限 <em>lottery_hi</em></label><input id="cfg-lottery-hi" type="number"><p class="hint">中奖后随机返还上限</p></div>
             </div>
           </section>
           <section class="panel">
-            <div class="panel-head"><div><h2>抽奖</h2><p>消耗与命中率</p></div></div>
+            <div class="panel-head"><div><h2>抽奖</h2><p>消耗、命中率与奖励区间</p></div></div>
             <div class="panel-body rules-form">
               <div class="field"><label>抽奖消耗 <em>lottery_cost</em></label><input id="cfg-lottery-cost" type="number"><p class="hint">每抽扣除的积分数</p></div>
               <div class="field"><label>中奖率 % <em>lottery_win_rate</em></label><input id="cfg-lottery-win" type="number" step="1" min="0" max="100"><p class="hint">0-100 之间的命中百分比</p></div>
+              <div class="field"><label>奖品下限 <em>lottery_lo</em></label><input id="cfg-lottery-lo" type="number"><p class="hint">中奖后随机返还下限</p></div>
+              <div class="field"><label>奖品上限 <em>lottery_hi</em></label><input id="cfg-lottery-hi" type="number"><p class="hint">中奖后随机返还上限</p></div>
             </div>
           </section>
           <section class="panel">
@@ -75,7 +75,16 @@
               <div class="field"><label>生图 <em>draw_cost</em></label><input id="cfg-draw-cost" type="number"><p class="hint">生成一次图片扣除积分</p></div>
             </div>
           </section>
-          <div class="actions-bar"><button class="btn primary" id="save-config" type="button">保存全部配置</button></div>
+          <section class="panel">
+            <div class="panel-head"><div><h2>生图服务</h2><p>OpenAI 兼容绘图接口（密钥仅存本地，安全）</p></div></div>
+            <div class="panel-body rules-form">
+              <div class="field"><label>接口地址 <em>draw_api_base</em></label><input id="cfg-draw-api-base" type="text" placeholder="https://weilai.chat/v1"><p class="hint">OpenAI 兼容接口，如 https://weilai.chat/v1</p></div>
+              <div class="field"><label>API Key <em>draw_api_key</em></label><input id="cfg-draw-api-key" type="text" placeholder="sk-..."><p class="hint">生图密钥（保存在本机配置，不上传）</p></div>
+              <div class="field"><label>模型 <em>draw_model</em></label><input id="cfg-draw-model" type="text" placeholder="gpt-image-2"><p class="hint">图像生成模型，如 gpt-image-2</p></div>
+              <div class="field"><label>代理 <em>draw_proxy</em></label><input id="cfg-draw-proxy" type="text" placeholder="socks5://user:pass@host:port"><p class="hint">接口需要代理时填写，留空直连</p></div>
+            </div>
+          </section>
+<div class="actions-bar"><button class="btn primary" id="save-config" type="button">保存全部配置</button></div>
         </section>
 
         <!-- 积分 -->
