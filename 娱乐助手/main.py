@@ -805,7 +805,7 @@ async def cmd_dog(event, match):
     if not data:
         return await _md(event, "⚠️ 生成失败，请稍后再试")
     try:
-        await event.reply_image(data, content=_prefix_at(event) + "🐶 单身狗配图已生成")
+        await event.reply_image(data, content="🐶 单身狗配图已生成")
     except Exception:
         await _md(event, "🐶 单身狗配图已生成")
 
@@ -837,7 +837,7 @@ async def cmd_money(event, match):
     if not data:
         return await _md(event, "⚠️ 生成失败，请稍后再试")
     try:
-        await event.reply_image(data, content=_prefix_at(event) + "💰 「我想要马内」配图已生成")
+        await event.reply_image(data, content="💰 「我想要马内」配图已生成")
     except Exception:
         await _md(event, "💰 「我想要马内」配图已生成")
 
@@ -948,7 +948,8 @@ async def _draw_legacy(event, prompt, draw_cost, size=""):
     info_lines.append(f"消耗：{draw_cost} 积分")
     content = f"🎨 {title}\n" + "\n".join(info_lines)
     try:
-        await event.reply_image(url, content=content)
+        await _md(event, content)  # 先发 markdown 说明 (含头像+@)
+        await event.reply_image(url)  # 再发图 (无 content, bot 头像自动)
     except Exception:
         await _md(event, f"🎨 「{prompt}」\n{url}")
 
@@ -987,13 +988,15 @@ async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size="1
             import base64 as _b64
 
             img_bytes = _b64.b64decode(b64)
-            await event.reply_image(img_bytes, content=content)
+            await _md(event, content)  # 先发 markdown 说明
+            await event.reply_image(img_bytes)  # 再发图
             return
         except Exception:
             pass
     if url.startswith("http"):
         try:
-            await event.reply_image(url, content=content)
+            await _md(event, content)  # 先发 markdown 说明
+            await event.reply_image(url)  # 再发图
             return
         except Exception:
             await _md(event, f"🎨 「{prompt}」\n{url}")
