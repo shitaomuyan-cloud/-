@@ -19,6 +19,7 @@ from core.plugin.web_pages import register_page, unregister_page
 from .app import webpanel
 from .app import games as g
 from .app import points as p
+from .app import entconfig
 
 __plugin_meta__ = {
     "name": "娱乐助手",
@@ -62,7 +63,9 @@ def _gid_handler(fn):
 
     @functools.wraps(fn)
     async def wrapper(event, match):
-        p.set_group(str(getattr(event, "group_id", "") or ""))
+        gid = str(getattr(event, "group_id", "") or "")
+        p.set_group(gid)
+        entconfig.set_current(entconfig.group_config(gid))
         return await fn(event, match)
 
     return wrapper
@@ -477,22 +480,23 @@ async def _cleanup():
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*(娱乐帮助|娱乐菜单|娱乐指令)(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="娱乐帮助", desc="查看娱乐助手全部指令", priority=60, block=True, ignore_at_check=True)
 @_gid_handler
 async def cmd_help(event, match):
+    _c = entconfig.get_current()
     rows = [
-        ("签到", f"每日1次 得{g.SIGN_LO}~{g.SIGN_HI}"),
-        ("抽奖", f"花{g.LOTTERY_COST} 得{g.LOTTERY_LO}~{g.LOTTERY_HI}"),
+        ("签到", f"每日1次 得{_c['sign_lo']}~{_c['sign_hi']}"),
+        ("抽奖", f"花{_c['lottery_cost']} 得{_c['lottery_lo']}~{_c['lottery_hi']}"),
         ("我的", "积分/反甲/排名"),
         ("积分排行", "全群排行"),
-        ("抢劫 @对方", f"抢{g.ROBBERY_LO}~{g.ROBBERY_HI}"),
+        ("抢劫 @对方", f"抢{_c['robbery_lo']}~{_c['robbery_hi']}"),
         ("同归于尽 @对方", "双方同扣"),
-        ("购买反甲", f"花{g.ARMOR_COST} 防抢"),
+        ("购买反甲", f"花{_c['armor_cost']} 防抢"),
         ("单身狗 @对方", "恶搞图"),
         ("马内 @对方", "求财图"),
         ("发红包 积分 份数 口令", "30分有效"),
         ("抢红包 [口令]", "抢红包"),
         ("红包列表", "可抢红包"),
-        ("禁言 @对方", f"{g.MUTE_COST}分/分"),
-        ("撤回", f"引用后发 花{g.REVOKE_COST}"),
-        ("生图 描述", f"花{g.DRAW_COST}绘图"),
+        ("禁言 @对方", f"{_c['mute_cost']}分/分"),
+        ("撤回", f"引用后发 花{_c['revoke_cost']}"),
+        ("生图 描述", f"花{_c['draw_cost']}绘图"),
         ("加减积分 @对方 数量", "管理员"),
     ]
     lines = ["🎮 娱乐助手 · 指令", "", "| 指令 | 说明 |", "| :---: | :---: |"]

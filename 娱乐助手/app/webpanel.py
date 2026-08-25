@@ -11,6 +11,7 @@ from core.plugin.web_pages import register_route
 from . import games as g
 from . import points as p
 from . import redpack_store as rs
+from . import entconfig
 
 log = get_logger(PLUGIN, "娱乐助手面板")
 
@@ -28,24 +29,12 @@ RELOADED = True
 
 
 def _default_config() -> dict:
-    return {
-        "sign_lo": g.SIGN_LO,
-        "sign_hi": g.SIGN_HI,
-        "lottery_cost": g.LOTTERY_COST,
-        "lottery_lo": g.LOTTERY_LO,
-        "lottery_hi": g.LOTTERY_HI,
-        "lottery_win_rate": g.LOTTERY_WIN_RATE,
-        "robbery_lo": g.ROBBERY_LO,
-        "robbery_hi": g.ROBBERY_HI,
-        "robbery_rate": g.ROBBERY_SUCCESS_RATE,
-        "mute_cost": g.MUTE_COST,
-        "revoke_cost": g.REVOKE_COST,
-        "draw_cost": g.DRAW_COST,
-        "armor_cost": g.ARMOR_COST,
-    }
+    """默认规则配置 (entconfig 提供)。"""
+    return dict(entconfig.DEFAULTS)
 
 
 def _sync_config(cfg: dict):
+    """兼容保留: 同步到 games 模块默认 (新逻辑 games 直接读 entconfig 群配置)。"""
     g.SIGN_LO = int(cfg.get("sign_lo", g.SIGN_LO))
     g.SIGN_HI = int(cfg.get("sign_hi", g.SIGN_HI))
     g.LOTTERY_COST = int(cfg.get("lottery_cost", g.LOTTERY_COST))
@@ -61,25 +50,14 @@ def _sync_config(cfg: dict):
     g.ARMOR_COST = int(cfg.get("armor_cost", g.ARMOR_COST))
 
 
-def load_config() -> dict:
-    if _CONFIG_FILE.exists():
-        try:
-            data = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
-            cfg = _default_config()
-            cfg.update(data)
-            _sync_config(cfg)
-            return cfg
-        except Exception:
-            pass
-    cfg = _default_config()
-    _sync_config(cfg)
-    return cfg
+def load_config(gid=None) -> dict:
+    """按群加载配置 (entconfig)。"""
+    return entconfig.group_config(gid)
 
 
-def save_config(cfg: dict):
-    _CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    _sync_config(cfg)
+def save_config(cfg: dict, gid=None):
+    """按群保存配置 (entconfig)。"""
+    entconfig.save_group_config(gid, cfg)
 
 
 async def _asset(request):
@@ -271,20 +249,22 @@ async def _api_set_qq(request):
 
 
 async def _api_config(request):
-    return web.json_response({"success": True, "data": load_config()})
+    gid = _resolve_gid(request)
+    return web.json_response({"success": True, "data": load_config(gid)})
 
 
 async def _api_save_config(request):
+    gid = _resolve_gid(request)
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"success": False, "error": "invalid json"}, status=400)
-    cfg = load_config()
+    cfg = load_config(gid)
     for key in cfg:
         if key in body:
             cfg[key] = body[key]
-    save_config(cfg)
-    return web.json_response({"success": True, "data": load_config()})
+    save_config(cfg, gid)
+    return web.json_response({"success": True, "data": load_config(gid)})
 
 
 def _list_joined_groups():

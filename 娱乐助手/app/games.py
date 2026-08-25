@@ -5,15 +5,16 @@ import time
 from datetime import datetime
 
 from . import points as p
+from . import entconfig
 
 # 红包有效期: 30 分钟
 REDPACK_TTL = 30 * 60
 
-# ---------- 通用积分开销 ----------
-MUTE_COST = 100
-REVOKE_COST = 50
-ARMOR_COST = 100
-DRAW_COST = 50
+# ---------- 通用积分开销 (默认值, 实际按群配置) ----------
+MUTE_COST = entconfig.DEFAULTS["mute_cost"]
+REVOKE_COST = entconfig.DEFAULTS["revoke_cost"]
+ARMOR_COST = entconfig.DEFAULTS["armor_cost"]
+DRAW_COST = entconfig.DEFAULTS["draw_cost"]
 
 
 def can_afford(user_id, cost) -> bool:
@@ -35,17 +36,18 @@ def refund(user_id, cost) -> None:
 
 # ---------- 签到 ----------
 
-SIGN_LO = 50
-SIGN_HI = 200
+SIGN_LO = entconfig.DEFAULTS["sign_lo"]
+SIGN_HI = entconfig.DEFAULTS["sign_hi"]
 
 
 def sign(user_id, today_str: str = None):
-    """签到: 每日一次, 50~200 积分。返回 (gained, total, already_signed)。"""
+    """签到: 每日一次, 随机积分 (按群配置)。返回 (gained, total, already_signed)。"""
     if today_str is None:
         today_str = p.today_sign_key()
     if p.last_sign_date(user_id) == today_str:
         return 0, p.get_points(user_id), True
-    gained = p.random_points(SIGN_LO, SIGN_HI)
+    cfg = entconfig.get_current()
+    gained = p.random_points(cfg["sign_lo"], cfg["sign_hi"])
     total = p.add_points(user_id, gained)
     p.set_last_sign_date(user_id, today_str)
     return gained, total, False
@@ -53,21 +55,23 @@ def sign(user_id, today_str: str = None):
 
 # ---------- 抽奖 ----------
 
-LOTTERY_COST = 20
-LOTTERY_LO = 5
-LOTTERY_HI = 150
-LOTTERY_WIN_RATE = 0.55
+LOTTERY_COST = entconfig.DEFAULTS["lottery_cost"]
+LOTTERY_LO = entconfig.DEFAULTS["lottery_lo"]
+LOTTERY_HI = entconfig.DEFAULTS["lottery_hi"]
+LOTTERY_WIN_RATE = entconfig.DEFAULTS["lottery_win_rate"]
 
 
 def lottery(user_id):
-    """抽奖: 扣20积分, 按胜率随机赢5~150积分。
+    """抽奖: 扣积分, 按胜率随机赢积分 (数值按群配置)。
     返回 (won, total, insufficient, is_win)。won 为 0 表示本次未中奖。"""
-    if not can_afford(user_id, LOTTERY_COST):
+    cfg = entconfig.get_current()
+    cost = cfg["lottery_cost"]
+    if not can_afford(user_id, cost):
         return 0, p.get_points(user_id), True, False
-    charge(user_id, LOTTERY_COST)
-    is_win = random.random() < LOTTERY_WIN_RATE
+    charge(user_id, cost)
+    is_win = random.random() < cfg["lottery_win_rate"]
     if is_win:
-        won = p.random_points(LOTTERY_LO, LOTTERY_HI)
+        won = p.random_points(cfg["lottery_lo"], cfg["lottery_hi"])
         total = p.add_points(user_id, won)
     else:
         won = 0
@@ -77,20 +81,21 @@ def lottery(user_id):
 
 # ---------- 抢劫 ----------
 
-ROBBERY_LO = 0
-ROBBERY_HI = 150
-ROBBERY_SUCCESS_RATE = 0.4
+ROBBERY_LO = entconfig.DEFAULTS["robbery_lo"]
+ROBBERY_HI = entconfig.DEFAULTS["robbery_hi"]
+ROBBERY_SUCCESS_RATE = entconfig.DEFAULTS["robbery_rate"]
 
 
 def robbery(attacker_id, defender_id):
-    """抢劫: 0~150 积分。
+    """抢劫: 随机积分 (数值按群配置)。
     成功: 攻击者 +分, 防守者 -分。
     失败: 攻击者 -分 (对方加对应分)。
     防守者持有反甲: 攻击必然失败, 攻击者支付 stolen 给防守者并消耗反甲。
     返回 (stolen, attacker_total, defender_total, success, armored)。
     armored=True 表示本次触发防守者反甲反弹。
     """
-    stolen = p.random_points(ROBBERY_LO, ROBBERY_HI)
+    cfg = entconfig.get_current()
+    stolen = p.random_points(cfg["robbery_lo"], cfg["robbery_hi"])
     if stolen == 0:
         return 0, p.get_points(attacker_id), p.get_points(defender_id), False, False
 
@@ -103,7 +108,7 @@ def robbery(attacker_id, defender_id):
             p.add_points(defender_id, actual)
         return actual, p.get_points(attacker_id), p.get_points(defender_id), False, True
 
-    success = random.random() < ROBBERY_SUCCESS_RATE
+    success = random.random() < entconfig.get_current()["robbery_rate"]
     if success:
         defender_pts = p.get_points(defender_id)
         actual = min(stolen, defender_pts)
