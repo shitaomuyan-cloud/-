@@ -345,10 +345,14 @@ async def _api_groups(request):
 
             async def _refresh_one(gid):
                 for bot in bots.values():
+                    sender = getattr(bot, "sender", None)
+                    if sender is None or not hasattr(sender, "get_group_info"):
+                        continue
                     try:
-                        await bot.get_group_info(gid, return_error=True)
+                        await sender.get_group_info(gid, return_error=True)
                         break
-                    except Exception:
+                    except Exception as e:
+                        log.warning("群刷新异常 %s: %s", str(gid)[:8], e)
                         continue
 
             await asyncio.gather(*(_refresh_one(g["group_id"]) for g in joined))
