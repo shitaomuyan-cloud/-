@@ -530,12 +530,12 @@ async def cmd_help(event, match):
         ("禁言 @对方", f"{_c['mute_cost']}分/分"),
         ("撤回", f"引用后发 花{_c['revoke_cost']}"),
         ("生图 描述", f"花{_c['draw_cost']}绘图·选比例"),
-        ("加减积分 @对方 数量", "管理员"),
+        ("加删积分 @对方 数量", "管理员"),
     ]
     lines = ["🎮 娱乐助手 · 指令", "", "| 指令 | 说明 |", "| :---: | :---: |"]
     for cmd, desc in rows:
         lines.append(f"| {cmd} | {desc} |")
-    await _md(event, "\n".join(lines), at=False)
+    await _md(event, "\n".join(lines))
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*签到(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="签到", desc="每日签到, 得积分并显示头像", priority=60, block=True, ignore_at_check=True)
@@ -593,7 +593,7 @@ async def cmd_rank(event, match):
         code = f"{row['points']} 分"
         # 固定宽度等宽代码块：列居中但代码块右边缘一致 → 分字一条线
         lines.append(f"| {medal} | {nick} | `{code:>{pts_w + 2}}` |")
-    await _md(event, "\n".join(lines), at=False)
+    await _md(event, "\n".join(lines))
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*购买反甲\s*(\d+)?\s*$", name="购买反甲", desc="花积分购买反甲护盾 (支持数量: 购买反甲2)", priority=60, block=True, ignore_at_check=True)
@@ -686,7 +686,7 @@ async def cmd_packs(event, match):
     if not packs:
         return await _md(event, "📭 当前没有可抢的红包")
     items = [f"· {_nick(x['sender_id'])}　剩 {_c(str(x['remaining'])+chr(47)+str(x['count']))} 份　口令 {_c(x['id'])}" for x in packs[:10]]
-    await _card(event, "🧧 当前可抢红包", items=items + ["", "提示：发送「抢红包 口令」即可抢"], at=False)
+    await _card(event, "🧧 当前可抢红包", items=items + ["", "提示：发送「抢红包 口令」即可抢"])
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*禁言(?!菜单|列表)(?=\s|$|<|@)", name="禁言", desc="禁言 @对方 [分钟], 每分钟100积分, 默认1分钟", priority=60, block=True, ignore_at_check=True)
@@ -906,6 +906,7 @@ async def _show_ratio_buttons(event, prompt, draw_cost):
 
 async def _draw_legacy(event, prompt, draw_cost, size=""):
     """内置绘图接口 (百度绘图, 兼容旧行为)。"""
+    await _md(event, f"🎨 正在生成「{_first_line(prompt, 8)}」…")
     try:
         params = {"keyword": prompt}
         if size:
@@ -952,7 +953,7 @@ async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size="1
     # 取消回调
     if size == "cancel":
         return await _md(event, f"已取消生图「{prompt}」")
-    await _md(event, f"🎨 正在生成「{prompt}」({size})…")
+    await _md(event, f"🎨 正在生成「{_first_line(prompt, 8)}」({size})…")
     try:
         kwargs = {"proxy": proxy} if proxy else {}
         async with httpx.AsyncClient(timeout=120, **kwargs) as client:
