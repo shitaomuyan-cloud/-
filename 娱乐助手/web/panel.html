@@ -90,8 +90,6 @@
                 <div class="field"><label>生图密钥 <em>draw_api_key</em></label><input id="cfg-draw-api-key" type="text" placeholder="sk-..."><p class="hint">生图密钥</p></div>
                 <div class="field"><label>模型 <em>draw_model</em></label><input id="cfg-draw-model" type="text" placeholder="gpt-image-2"><p class="hint">图像生成模型，如 gpt-image-2</p></div>
                 <div class="field"><label>代理 <em>draw_proxy</em></label><input id="cfg-draw-proxy" type="text" placeholder="socks5://user:pass@host:port"><p class="hint">接口需要代理时填写，留空直连</p></div>
-                <div class="field"><label class="switch-line"><input type="checkbox" id="cfg-draw-safety-enabled"><span>启用生图安全审核 <em>draw_safety_enabled</em></span></label><p class="hint">生图前用本地敏感词审核描述合规性, 命中违规拦截并退分 (不依赖任何外部服务)</p></div>
-                <div class="field"><label>敏感词列表 <em>draw_blocked_words</em></label><textarea id="cfg-draw-blocked-words" rows="4" placeholder="逗号分隔, 如：裸体,不穿衣服,nsfw"></textarea><p class="hint">本地敏感词(逗号分隔), 命中立即拦截; 留空=不启用本地检查, 仅靠 LLM 审核</p></div>
               </div>
             </section>
             <div class="actions-bar"><button class="btn primary" id="save-draw-config" type="button">保存生图配置</button></div>
