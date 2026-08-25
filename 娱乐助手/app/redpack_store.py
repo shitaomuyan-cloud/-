@@ -128,3 +128,16 @@ def delete(pack_id: str, gid=None):
         store = _gid_store(gid)
         store.pop(pack_id, None)
         _save()
+
+
+def remove_group(gid) -> bool:
+    """删除某个群的全部红包数据 (机器人退出该群时调用)。返回是否删除了。"""
+    global _cache
+    with _lock:
+        data = _load()
+        key = str(gid)
+        if key in data and key != "_meta":
+            del data[key]
+            _save()
+            return True
+        return False

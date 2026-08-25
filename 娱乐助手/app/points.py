@@ -286,6 +286,19 @@ def remove_user(user_id) -> bool:
         return False
 
 
+def remove_group(gid) -> bool:
+    """删除某个群的全部积分数据 (机器人退出该群时调用)。返回是否删除了。"""
+    global _cache
+    with _lock:
+        data = _load()
+        key = str(gid)
+        if key in data and key != "_meta":
+            del data[key]
+            _save()
+            return True
+        return False
+
+
 def set_qq(user_id, qq: str):
     """绑定/修改用户显示的 QQ 号 (openid 无法自动获取，需手动登记)。"""
     _ensure(user_id)["qq"] = str(qq) if qq else ""

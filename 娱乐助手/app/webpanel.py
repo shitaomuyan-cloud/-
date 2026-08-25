@@ -303,7 +303,7 @@ def _list_joined_groups():
             rows = bot.log_service.query_data(
                 "SELECT group_id, group_name, group_member_num, in_group "
                 "FROM groups_users WHERE group_id != ? AND in_group = 1",
-                (""),
+                ("",),
             )
         except Exception:
             continue
@@ -321,26 +321,25 @@ def _list_joined_groups():
 
 
 async def _api_groups(request):
-    """返回所有群 (机器人已加入的 + 本插件有数据的), 用于 Web 群选择器。"""
+    """返回机器人当前已加入的所有群; 已退出的群自动移除并清空数据。"""
     joined = _list_joined_groups()
-    # 合并本地有数据的群 (可能机器人已退出但数据还在)
-    by_id = {g["group_id"]: g for g in joined}
-    for gid in p.list_groups():
-        s = str(gid)
-        if s not in by_id:
-            by_id[s] = {"group_id": s, "group_name": "", "member_count": 0}
-    for gid in rs.list_groups():
-        s = str(gid)
-        if s not in by_id:
-            by_id[s] = {"group_id": s, "group_name": "", "member_count": 0}
+    joined_ids = {g["group_id"] for g in joined}
+    # 清理: 本地有数据但机器人已不在该群 → 清空
+    for gid in list(p.list_groups()):
+        if str(gid) not in joined_ids:
+            p.remove_group(gid)
+    for gid in list(rs.list_groups()):
+        if str(gid) not in joined_ids:
+            rs.remove_group(gid)
     data = []
-    for gid, g in by_id.items():
+    for g in joined:
+        gid = g["group_id"]
         data.append({
             "id": gid,
             "name": g.get("group_name", ""),
             "members": g.get("member_count", 0),
             "users": p.group_user_count(gid),
-            "legacy": gid == "__legacy__",
+            "legacy": False,
         })
     # 排序: 有数据的优先, 然后按群名
     data.sort(key=lambda x: (0 if x["users"] > 0 else 1, x.get("name") or x["id"]))
