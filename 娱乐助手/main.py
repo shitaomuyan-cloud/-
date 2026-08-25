@@ -250,6 +250,14 @@ def _avatar(event, uid=None):
     return f"https://q.qlogo.cn/qqapp/{getattr(event, 'appid', '') or '100000000'}/{uid}/640"
 
 
+def _prefix_at(event):
+    """返回「头像 + @」前缀 (用于 reply_image / reply(buttons) 等不走 _md 的回复)。"""
+    uid = str(getattr(event, "user_id", "") or "")
+    if not uid:
+        return ""
+    return f"![头像 #24px #24px]({_avatar(event, uid)}) <@{uid}>\n\n"
+
+
 async def _md(event, text, at=True):
     """发送回复；at=True 时「头像 + @」一行，内容在下一段。"""
     if at:
@@ -798,7 +806,7 @@ async def cmd_dog(event, match):
     if not data:
         return await _md(event, "⚠️ 生成失败，请稍后再试")
     try:
-        await event.reply_image(data, content="🐶 单身狗配图已生成")
+        await event.reply_image(data, content=_prefix_at(event) + "🐶 单身狗配图已生成")
     except Exception:
         await _md(event, "🐶 单身狗配图已生成")
 
@@ -830,7 +838,7 @@ async def cmd_money(event, match):
     if not data:
         return await _md(event, "⚠️ 生成失败，请稍后再试")
     try:
-        await event.reply_image(data, content="💰 「我想要马内」配图已生成")
+        await event.reply_image(data, content=_prefix_at(event) + "💰 「我想要马内」配图已生成")
     except Exception:
         await _md(event, "💰 「我想要马内」配图已生成")
 
@@ -896,7 +904,7 @@ async def _show_ratio_buttons(event, prompt, draw_cost):
             {"text": "🖥 PC壁纸", "data": f"生图 {p_safe}|1920x1080", "reply": True},
         ],
     ]
-    content = f"🎨 选择生图比例\n描述：「{_first_line(prompt, 8)}」\n扣：{_c(draw_cost)} 积分"
+    content = _prefix_at(event) + f"🎨 选择生图比例\n描述：「{_first_line(prompt, 8)}」\n扣：{_c(draw_cost)} 积分"
     try:
         await event.reply(content, buttons=button_rows)
     except Exception:
@@ -974,7 +982,7 @@ async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size="1
     b64 = str(items[0].get("b64_json") or "")
     url = str(items[0].get("url") or "")
     title = f"生成完成「{_first_line(prompt, 8)}」"
-    content = f"🎨 {title}\n比例：{size}\n消耗：{draw_cost} 积分"
+    content = _prefix_at(event) + f"🎨 {title}\n比例：{size}\n消耗：{draw_cost} 积分"
     if b64:
         try:
             import base64 as _b64
