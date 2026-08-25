@@ -266,6 +266,19 @@ def _c(v):
     return str(v)
 
 
+async def _md(event, text, at=True):
+    """发送回复；at=True 时前置「头像 + @」一行 (群管同款, QQ markdown 渲染)。"""
+    if at:
+        uid = str(getattr(event, "user_id", "") or "")
+        if uid and not text.startswith(("![头像", "<@")):
+            text = f"{_prefix_at(event)}{text}"
+    try:
+        await event.reply(text)
+    except Exception:
+        with contextlib.suppress(Exception):
+            await event.reply(text)
+
+
 def _r(title, rows):
     """统一回复模板：emoji 标题 + 引用块内容（QQ markdown 灰色竖线卡片装饰）。"""
     return title + "\n" + "\n".join(f"> {r}" for r in rows)
