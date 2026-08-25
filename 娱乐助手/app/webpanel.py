@@ -321,7 +321,11 @@ def _list_joined_groups():
 
 
 async def _api_groups(request):
-    """返回机器人当前已加入的所有群; 已退出的群自动移除并清空数据。"""
+    """返回机器人当前已加入的所有群; 已退出的群自动移除并清空数据。
+
+    成员数实时刷新: 逐个调用 bot.get_group_info 拉取最新群资料 (QQ API),
+    踢人/进人后打开面板即显示最新人数。
+    """
     joined = _list_joined_groups()
     joined_ids = {g["group_id"] for g in joined}
     # 清理: 本地有数据但机器人已不在该群 → 清空
@@ -331,6 +335,26 @@ async def _api_groups(request):
     for gid in list(rs.list_groups()):
         if str(gid) not in joined_ids:
             rs.remove_group(gid)
+    # 实时刷新群成员数
+    if joined:
+        try:
+            from core.application import get_app
+
+            app = get_app()
+            bots = getattr(app, "_bots", {}) if app else {}
+
+            async def _refresh_one(gid):
+                for bot in bots.values():
+                    try:
+                        await bot.get_group_info(gid, return_error=True)
+                        break
+                    except Exception:
+                        continue
+
+            await asyncio.gather(*(_refresh_one(g["group_id"]) for g in joined))
+            joined = _list_joined_groups()
+        except Exception:
+            pass
     data = []
     for g in joined:
         gid = g["group_id"]
