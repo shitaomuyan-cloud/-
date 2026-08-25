@@ -852,7 +852,7 @@ async def _show_ratio_buttons(event, prompt, draw_cost):
             {"text": "🖥 PC壁纸", "data": f"生图 {p_safe}|1920x1080", "reply": True},
         ],
     ]
-    content = f"🎨 选择生图比例\n描述：「{_first_line(prompt, 15)}」\n扣：{_c(draw_cost)} 积分"
+    content = f"🎨 选择生图比例\n描述：「{_first_line(prompt, 8)}」\n扣：{_c(draw_cost)} 积分"
     try:
         await event.reply(content, buttons=button_rows)
     except Exception:
@@ -889,7 +889,7 @@ async def _draw_legacy(event, prompt, draw_cost, size=""):
     if not url.startswith("http"):
         g.refund(_uid(event), draw_cost)
         return await _md(event, "⚠️ 生图失败，积分已退还")
-    title = _first_line(f"生成完成「{prompt}」", 20)
+    title = f"生成完成「{_first_line(prompt, 8)}」"
     info_lines = []
     if size:
         info_lines.append(f"比例：{size}")
@@ -928,7 +928,7 @@ async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size="1
         return await _md(event, "⚠️ 生图失败，积分已退还")
     b64 = str(items[0].get("b64_json") or "")
     url = str(items[0].get("url") or "")
-    title = _first_line(f"生成完成「{prompt}」", 20)
+    title = f"生成完成「{_first_line(prompt, 8)}」"
     content = f"🎨 {title}\n比例：{size}\n消耗：{draw_cost} 积分"
     if b64:
         try:
