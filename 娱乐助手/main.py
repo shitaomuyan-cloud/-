@@ -11,6 +11,8 @@ import urllib.parse
 from datetime import datetime, timedelta
 
 import httpx
+import io
+from PIL import Image, ImageDraw, ImageFont
 
 from core.base.logger import PLUGIN, get_logger
 from core.message._http import MSG_TYPE_MARKDOWN
@@ -21,6 +23,9 @@ from .app import webpanel
 from .app import games as g
 from .app import points as p
 from .app import entconfig
+
+# 台风查询 (并入娱乐助手: 导入即注册 台风/台风查询/台风列表 等指令)
+from .台风 import *  # noqa: F401,F403
 
 __plugin_meta__ = {
     "name": "娱乐助手",
@@ -82,6 +87,92 @@ def _first_line(text, limit=20):
     if len(head) > limit:
         return head[:limit].rstrip() + "…"
     return head
+
+# 娱乐帮助宫格图生成（参考 QQ 应用菜单风格）
+_FONT_B_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+_FONT_R_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+
+
+def _ft(path, size):
+    try:
+        return ImageFont.truetype(path, size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def render_help_image(rows):
+    """生成娱乐菜单按键图: rows = [(指令名, 描述, 分类标签), ...]
+    样式: 按键一行3个, 指令名居中, 分类底色, 右上角小徽章
+    """
+    COLS = 3
+    MARGIN_X, MARGIN_Y = 20, 20
+    GAP_X, GAP_Y = 14, 14
+    BTN_W, BTN_H = 340, 126  # 按键尺寸
+
+    rows_count = (len(rows) + COLS - 1) // COLS
+    W = MARGIN_X * 2 + BTN_W * COLS + GAP_X * (COLS - 1)
+    H = MARGIN_Y * 2 + rows_count * BTN_H + (rows_count - 1) * GAP_Y
+
+    img = Image.new("RGB", (W, H), (250, 251, 253))
+    d = ImageDraw.Draw(img)
+
+    # 分类 -> (按键底色, 文字深色, 徽章底, 徽章字)
+    btn_colors = {
+        "积分": ((235, 241, 255), (56, 82, 210), (216, 228, 255), (88, 110, 255)),
+        "互动": ((244, 238, 255), (108, 78, 220), (235, 225, 255), (130, 100, 250)),
+        "红包": ((255, 238, 238), (220, 70, 70), (255, 224, 224), (255, 90, 90)),
+        "消耗": ((246, 246, 248), (120, 125, 135), (238, 238, 240), (150, 155, 165)),
+        "管理": ((249, 246, 236), (160, 130, 60), (244, 238, 220), (180, 150, 80)),
+        "系统": ((236, 246, 255), (50, 120, 200), (222, 240, 255), (60, 140, 220)),
+    }
+    _default = ((246, 246, 248), (120, 125, 135), (238, 238, 240), (150, 155, 165))
+
+    for i, (name, desc, tag) in enumerate(rows):
+        col = i % COLS
+        row = i // COLS
+        x = MARGIN_X + col * (BTN_W + GAP_X)
+        y = MARGIN_Y + row * (BTN_H + GAP_Y)
+
+        bg, fg, tag_bg, tag_fg = btn_colors.get(tag, _default)
+
+        # ---- 按键底(圆角矩形) ----
+        d.rounded_rectangle((x, y, x + BTN_W, y + BTN_H), radius=12, fill=bg)
+
+        # ---- 指令名居中 ----
+        d.text((x + BTN_W // 2, y + 40), name, font=_ft(_FONT_B_PATH, 26), fill=fg, anchor="mm")
+
+        # ---- 描述小字居中 ----
+        _desc_font = _ft(_FONT_R_PATH, 15)
+        max_desc_width = BTN_W - 44
+        lines = []
+        line = ""
+        for ch in str(desc):
+            test = line + ch
+            bbox = d.textbbox((0, 0), test, font=_desc_font)
+            if bbox[2] - bbox[0] <= max_desc_width:
+                line = test
+            else:
+                if line:
+                    lines.append(line)
+                line = ch
+        if line:
+            lines.append(line)
+        _dy = y + 82
+        for li, ln in enumerate(lines[:1]):
+            d.text((x + BTN_W // 2, _dy + li * 22), ln, font=_desc_font, fill=(140, 146, 160), anchor="mm")
+
+        # ---- 右上角小徽章 ----
+        _tag_font = _ft(_FONT_R_PATH, 13)
+        tbbox = d.textbbox((0, 0), tag, font=_tag_font)
+        tw, th = tbbox[2] - tbbox[0] + 14, tbbox[3] - tbbox[1] + 6
+        tx, ty = x + BTN_W - tw - 12, y + 12
+        d.rounded_rectangle((tx, ty, tx + tw, ty + th), radius=6, fill=tag_bg)
+        d.text((tx + tw // 2, ty + th // 2), tag, font=_tag_font, fill=tag_fg, anchor="mm")
+
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
 
 # 生图互斥: 同一群同时只允许一个生图任务 (gid -> bool)
 _draw_busy: dict = {}
@@ -520,32 +611,104 @@ async def _cleanup():
         unregister_page(_PAGE_KEY)
 
 
-@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*(娱乐帮助|娱乐菜单|娱乐指令)(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="娱乐帮助", desc="查看娱乐助手全部指令", priority=60, block=True, ignore_at_check=True)
+# 按键菜单: 每个按键点击后显示的用法说明 (data 走「菜单:指令」通道)
+_MENU_INFO = {
+    "签到": "📅 **签到**\n每日 1 次，随机得积分\n\n发送「签到」执行",
+    "抽奖": "🎰 **抽奖**\n花积分抽奖，带中奖率（每日5次）\n\n发送「抽奖」执行",
+    "我的": "👤 **我的**\n查看积分 / 反甲 / 排名 / 今日签到状态\n\n发送「我的」执行",
+    "积分排行": "🏆 **积分排行**\n查看全群积分排行榜 Top10\n\n发送「积分排行」执行",
+    "抢劫": "💰 **抢劫**\n随机抢对方的积分，失败会被反扣\n\n发送「抢劫 @某人」执行",
+    "同归于尽": "💥 **同归于尽**\n双方各扣积分，同归于尽\n\n发送「同归于尽 @某人」执行",
+    "购买反甲": "🛡️ **购买反甲**\n花积分买护盾，被抢时自动反弹\n\n发送「购买反甲 [数量]」执行\n例：购买反甲2",
+    "单身狗": "🐶 **单身狗**\n生成恶搞配图\n\n发送「单身狗 @某人」或「单身狗 QQ号」执行",
+    "马内": "💰 **马内**\n生成「我想要马内」求财配图\n\n发送「马内 @某人」或「马内 QQ号」执行",
+    "发红包": "🧧 **发红包**\n发出积分红包，口令 1~4 位数字，30 分钟未领完退回\n\n发送「发红包 总积分 份数 口令」执行\n例：发红包 100 3 12",
+    "抢红包": "🧧 **抢红包**\n抢群内可抢的红包\n\n发送「抢红包」直接抢，或「抢红包 口令」按口令抢",
+    "红包列表": "📋 **红包列表**\n查看当前可抢的红包\n\n发送「红包列表」执行",
+    "禁言": "🔇 **禁言**\n花积分禁言群成员，默认 1 分钟\n\n发送「禁言 @某人 [分钟]」执行",
+    "撤回": "🗑️ **撤回**\n撤回机器人发过的消息（扣积分）\n\n先引用机器人消息，再发送「撤回」执行",
+    "生图": "🎨 **生图**\n花积分 AI 绘图，可选比例\n\n发送「生图 描述」执行\n例：生图 一只猫",
+}
+
+
+@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*(娱乐菜单|娱乐帮助|娱乐指令)(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="娱乐菜单", desc="查看娱乐助手全部指令(按键菜单)", priority=60, block=True, ignore_at_check=True)
 @_gid_handler
 async def cmd_help(event, match):
-    _c = entconfig.get_current()
-    rows = [
-        ("签到", f"每日1次 得{_c['sign_lo']}~{_c['sign_hi']}"),
-        ("抽奖", f"花{_c['lottery_cost']} 得{_c['lottery_lo']}~{_c['lottery_hi']}"),
-        ("我的", "积分/反甲/排名"),
-        ("积分排行", "全群排行"),
-        ("抢劫 @对方", f"抢{_c['robbery_lo']}~{_c['robbery_hi']}"),
-        ("同归于尽 @对方", "双方同扣"),
-        ("购买反甲 [数量]", f"{_c['armor_cost']}积分/个 防抢"),
-        ("单身狗 @对方", "恶搞图"),
-        ("马内 @对方", "求财图"),
-        ("发红包 积分 份数 口令", "30分有效"),
-        ("抢红包 [口令]", "抢红包"),
-        ("红包列表", "可抢红包"),
-        ("禁言 @对方", f"{_c['mute_cost']}分/分"),
-        ("撤回", f"引用后发 花{_c['revoke_cost']}"),
-        ("生图 描述", f"花{_c['draw_cost']}绘图·选比例"),
-        ("加删积分 @对方 数量", "管理员"),
+    # 按键菜单: 一行3个, 点击后在输入框预填指令模板, 用户补全参数后发送
+    # QQ 内联键盘限制最多 5 行, 故精简为 15 个按键 (5行×3列)
+    # 管理指令(添加/删除积分)仅管理员用, 手动输入即可; 娱乐菜单按键冗余移除
+    # 按键菜单: QQ 内联键盘限制最多 5 行, 每行最多 5 个 → 用 4行×4列 放 16 个按键
+    btns = [
+        ("签到", "签到"),
+        ("抽奖", "抽奖"),
+        ("我的", "我的"),
+        ("积分排行", "积分排行"),
+        ("抢劫", "抢劫 @某人"),
+        ("同归于尽", "同归于尽 @某人"),
+        ("购买反甲", "购买反甲 数量"),
+        ("单身狗", "单身狗 @某人"),
+        ("马内", "马内 @某人"),
+        ("发红包", "发红包 积分 份 口令"),
+        ("抢红包", "抢红包 口令"),
+        ("红包列表", "红包列表"),
+        ("禁言", "禁言 @某人 分钟"),
+        ("撤回", "撤回"),
+        ("台风", "台风"),
+        ("生图", "生图 描述"),
     ]
-    lines = ["🎮 娱乐助手 · 指令", "", "| 指令 | 说明 |", "| :---: | :---: |"]
-    for cmd, desc in rows:
-        lines.append(f"| {cmd} | {desc} |")
-    await _md(event, "\n".join(lines))
+    # enter=True: 点击后模板填入输入框 (用户补全参数再发送), 不模拟发送; 每行4个
+    button_rows = [[{"text": t, "data": d, "enter": True} for t, d in btns[i:i + 4]] for i in range(0, len(btns), 4)]
+    # 头像+@ + 居中标题图(自带分割线), markdown 图片块级居中显示; 去掉头像行后空行
+    content = _prefix_at(event).rstrip() + "\n" + "![🎮 娱乐菜单 #640px #150px](https://ac10238b5a674cd83.app.workbuddy.link/web/yy_menu_title2.png)"
+    try:
+        await event.reply(content, buttons=button_rows)
+    except Exception as e:
+        log.warning("发送按键菜单失败, 降级为图片: %s", e)
+        _c = entconfig.get_current()
+        rows = [
+            ("签到", "每日1次，随机得积分", "积分"),
+            ("抽奖", "花积分抽奖，带中奖率", "积分"),
+            ("我的", "查看积分/反甲/排名/签到", "积分"),
+            ("积分排行", "查看全群排行榜", "积分"),
+            ("抢劫 @某人", "随机抢积分，失败反扣", "互动"),
+            ("同归于尽 @某人", "双方各扣积分少者的全部", "互动"),
+            ("购买反甲 [数量]", "花积分购护盾防抢，如 购买反甲2", "互动"),
+            ("单身狗 @某人 或 QQ号", "生成单身狗恶搞配图", "互动"),
+            ("马内 @某人 或 QQ号", "生成求财配图", "互动"),
+            ("发红包 积分 份数 口令", "口令1~4位数字，30分钟未领完退回", "红包"),
+            ("抢红包 [口令]", "直接抢或按口令抢", "红包"),
+            ("红包列表", "查看可抢红包", "红包"),
+            ("禁言 @某人 [分钟]", "花积分禁言，默认1分钟", "消耗"),
+            ("撤回", "引用消息后发送本指令撤回", "消耗"),
+            ("生图 描述", "花积分AI绘图，弹按钮选比例", "消耗"),
+            ("添加积分", "管理员加积分", "管理"),
+            ("删除积分", "管理员扣积分", "管理"),
+            ("台风", "查询当前最强台风 + 路径图", "系统"),
+            ("台风查询 名称/编号", "查详情与路径图", "系统"),
+            ("台风列表 [年份]", "活跃/按年列表", "系统"),
+            ("娱乐菜单", "查看全部指令", "系统"),
+        ]
+        try:
+            img = render_help_image(rows)
+            await event.reply_image(img, content="🎮 娱乐助手 · 指令菜单")
+        except Exception as e2:
+            log.warning("降级图片也失败, 改为文本: %s", e2)
+            lines = ["🎮 娱乐助手 · 指令", "", "| 指令 | 说明 |", "| :---: | :---: |"]
+            for cmd, desc, _ in rows:
+                lines.append(f"| {cmd} | {desc} |")
+            await _md(event, "\n".join(lines))
+
+
+@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*(菜单|按键)[:：]\s*([\u4e00-\u9fa5A-Za-z0-9]+)\s*$", name="菜单说明", desc="按键点击后回复对应指令用法", priority=58, block=True, ignore_at_check=True)
+@_gid_handler
+async def cmd_menu_info(event, match):
+    key = (match.group(2) or "").strip()
+    info = _MENU_INFO.get(key)
+    if info:
+        await _md(event, info)
+        return
+    # 未知按键 → 重发菜单
+    await cmd_help(event, match)
 
 
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*签到(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="签到", desc="每日签到, 得积分并显示头像", priority=60, block=True, ignore_at_check=True)
@@ -700,9 +863,11 @@ async def cmd_packs(event, match):
     await _card(event, "🧧 当前可抢红包", items=items + ["", "提示：发送「抢红包 口令」即可抢"])
 
 
-@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*禁言(?!菜单|列表)(?=\s|$|<|@)", name="禁言", desc="禁言 @对方 [分钟], 每分钟100积分, 默认1分钟", priority=60, block=True, ignore_at_check=True)
+@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*禁言(?!菜单|列表)(?=\s|$|<|@)", name="禁言", desc="禁言 @对方 [分钟], 每分钟100积分, 默认1分钟, 每日5次", priority=60, block=True, ignore_at_check=True)
 @_gid_handler
 async def cmd_mute(event, match):
+    if not await _limit_guard(event, "mute", "禁言", cooldown=0):
+        return
     target = _first_mention(event)
     if not target:
         return await _md(event, "⚠️ 请 @ 要禁言的对象")
@@ -737,10 +902,12 @@ async def cmd_mute(event, match):
     await _card(event, "🔇 禁言成功", items=[f"{_at(target)} 已禁言 {_c(minutes)} 分钟", f"消耗：{_c(cost)} 积分"])
 
 
-@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*撤回(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="撤回", desc="引用机器人消息后发送撤回, 扣积分", priority=60, block=True, ignore_at_check=True)
+@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*撤回(?:\s*(?:<@[^>]*>|@[\u4e00-\u9fa5\w]+))*\s*$", name="撤回", desc="引用机器人消息后发送撤回, 扣积分, 每日5次", priority=60, block=True, ignore_at_check=True)
 @_gid_handler
 async def cmd_recall(event, match):
     uid = _uid(event)
+    if not await _limit_guard(event, "recall", "撤回", cooldown=0):
+        return
     if not g.charge(uid, entconfig.get_current()["revoke_cost"]):
         return await _md(event, f"⚠️ 积分不足\n撤回需要 {_c(entconfig.get_current()['revoke_cost'])} 积分")
     # 识别被引用消息: 1) ref_msg_idx 反查  2) msg_elements 内容匹配（均仅限机器人发送的消息）

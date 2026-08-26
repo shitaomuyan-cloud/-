@@ -12,14 +12,15 @@ function disp(u){let n=String(u.nickname||"").replace(/[\u3164\u200b\u200c\u200d
 function dispId(u){const q=(u.qq||"").trim();if(q&&q.isdigit?q.isdigit():/^\d+$/.test(q))return q;return shortId(u.id);}
 function avatarHtml(u){if(u&&u.avatar)return '<img class="avatar-img" src="'+esc(u.avatar)+'" alt="" onerror="this.style.display=\'none\'">';const nm=(u.nickname||"").trim()||u.id;const l=String(nm).slice(-2).toUpperCase()||"?";return '<span class="avatar">'+esc(l)+"</span>";}
 const COMMANDS=[
+{n:"娱乐菜单",d:"查看全部指令",tag:"系统"},
 {n:"签到",d:"每日1次，随机得积分",tag:"积分"},{n:"抽奖",d:"花积分抽奖，带中奖率",tag:"积分"},
 {n:"我的",d:"查看积分/反甲/排名/签到",tag:"积分"},{n:"积分排行",d:"查看全群排行榜",tag:"积分"},
 {n:"抢劫 @某人",d:"随机抢积分，失败反扣",tag:"互动"},{n:"同归于尽 @某人",d:"双方各扣积分少者的全部",tag:"互动"},
 {n:"购买反甲 [数量]",d:"花积分购护盾防抢，如 购买反甲2",tag:"互动"},{n:"单身狗 @某人 或 QQ号",d:"生成单身狗恶搞配图",tag:"互动"},{n:"马内 @某人 或 QQ号",d:"生成求财配图",tag:"互动"},{n:"发红包 积分 份数 口令",d:"口令1~4位数字，30分钟未领完退回",tag:"红包"},
 {n:"抢红包 [口令]",d:"直接抢或按口令抢",tag:"红包"},{n:"红包列表",d:"查看可抢红包",tag:"红包"},
 {n:"禁言 @某人 [分钟]",d:"花积分禁言，默认1分钟",tag:"消耗"},{n:"撤回",d:"引用消息后发送本指令撤回",tag:"消耗"},
-{n:"生图 描述",d:"花积分AI绘图，弹按钮选比例",tag:"消耗"},{n:"添加积分",d:"管理员加积分",tag:"管理"},
-{n:"删除积分",d:"管理员扣积分",tag:"管理"},{n:"娱乐帮助",d:"查看全部指令",tag:"系统"},
+{n:"生图 描述",d:"花积分AI绘图，弹按钮选比例",tag:"消耗"},{n:"添加积分",d:"管理员加积分",tag:"管理"},{n:"删除积分",d:"管理员扣积分",tag:"管理"},
+{n:"台风",d:"查询当前最强台风 + 路径图",tag:"系统"},
 ];
 const TITLES={overview:"数据总览",config:"规则配置",users:"用户管理",redpacks:"红包管理",about:"指令说明"};
 function switchPage(name){const btns=document.querySelectorAll(".bottom-nav button");btns.forEach(b=>b.classList.toggle("active",b.dataset.page===name));document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active",p.id==="page-"+name));const t=document.getElementById("page-title");if(t)t.textContent=TITLES[name]||"";window.scrollTo(0,0);}
