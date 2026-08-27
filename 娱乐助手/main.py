@@ -4889,6 +4889,11 @@ async def cmd_illustration(event, match):
     rate_msg = _chahua_check_rate(uid)
     if rate_msg:
         return await event.reply(rate_msg)
+    # 提示: 正在检测 (选图/检测/上传可能需数秒)
+    try:
+        await event.reply("⚠️ 图片正在检测中，请稍等…")
+    except Exception:  # noqa: BLE001
+        pass
     # 最多 3 轮: 违规后自动换图重试
     for attempt in range(3):
         jpeg, title, url = await _chahua_pick()
