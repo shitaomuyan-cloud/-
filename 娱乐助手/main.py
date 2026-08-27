@@ -4347,9 +4347,11 @@ def compose_detail(map_blob, view, note=''):
     draw = ImageDraw.Draw(canvas)
     y = _draw_title(draw, W, heading, right, pad, ft, fm)
     if mp:
+        y += 14  # 标题与官方图留间距, 避免与官方图自带标题重叠
         canvas.paste(mp, ((W - mp.size[0]) // 2, y))
-        y += mh
-    y += 6
+        y += mh + 14  # 官方图与下方信息区留间距
+    else:
+        y += 6
     for i in range(0, len(shorts), 2):
         for col, (k, v) in enumerate(shorts[i:i + 2]):
             x0 = pad + col * (col_w + pad)
@@ -4373,7 +4375,7 @@ def compose_detail(map_blob, view, note=''):
             for j, line in enumerate(block):
                 draw.text((vx, y), line, font=_font(fs), fill=_INK)
                 y += lh
-    return _jpeg(canvas.crop((0, 0, W, min(canvas.size[1], y + 8))))
+    return _jpeg(canvas.crop((0, 0, W, min(canvas.size[1], y + 28))))
 
 
 def compose_card(spec, note=''):
@@ -4429,7 +4431,7 @@ def compose_card(spec, note=''):
             for wln in _wrap(probe, ln, _font(fs), W - pad * 2):
                 draw.text((pad, y), wln, font=_font(fs), fill=_INK)
                 y += lh
-    return _jpeg(canvas.crop((0, 0, W, min(3600, y + 8))))
+    return _jpeg(canvas.crop((0, 0, W, min(3600, y + 28))))
 
 
 def _head(event):
