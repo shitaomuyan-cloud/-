@@ -26,7 +26,7 @@ __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询出图/二次元插画，含 Web 管理后台，积分按群独立",
-    "version": "2.4.4",
+    "version": "2.4.5",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -3889,7 +3889,7 @@ def _ok(result):
     return bool(result)
 
 
-def _lock(key):
+def _tf_lock(key):
     lock = _LOCKS.get(key)
     if lock is None:
         lock = asyncio.Lock()
@@ -4183,7 +4183,7 @@ async def fetch_official_track_png(view):
         return None, ''
     src = hit.get('img') or ''
     name = _disk_name('rawo', src) + '.bin'
-    async with _lock(src):
+    async with _tf_lock(src):
         data = _disk_load(name)
         if not data:
             data = await _tf_http(src, binary=True, timeout=18, headers=_PUB_HEADERS)
@@ -4203,7 +4203,7 @@ def _name(event):
     return n
 
 
-def _avatar(event):
+def _tf_avatar(event):
     for key in ('avatar', 'avatar_url', 'head_img', 'avatarUrl'):
         v = str(getattr(event, key, '') or '').strip()
         if v.startswith(('http://', 'https://')):
@@ -4443,7 +4443,7 @@ def compose_card(spec, note=''):
 
 def _head(event):
     name = f'@{_name(event)}'
-    av = _avatar(event)
+    av = _tf_avatar(event)
     return f'![头像 #24px #24px]({av}) {name}' if av else name
 
 
@@ -4926,7 +4926,7 @@ async def cmd_detail(event, match):
 
 @handler(r'^\s*/?(?:台风帮助|台风怎么用|使用说明)(?:\s+(\S.*?))?\s*$', name='台风帮助', desc='使用说明', ignore_at_check=True, block=True)
 @guard
-async def cmd_help(event, match):
+async def _tf_cmd_help(event, match):
     if _arg(match):
         await _say(event, _hint_noarg('台风帮助'))
         return
