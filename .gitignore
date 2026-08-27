@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
-娱乐助手/data/
+娱乐助手/data/*
+!娱乐助手/data/mikagogo_1_25.json
 娱乐助手/__pycache__/
 娱乐助手/app/__pycache__/
 娱乐助手/web/__pycache__/

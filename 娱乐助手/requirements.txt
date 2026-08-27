@@ -3,3 +3,5 @@
 Pillow>=10.0.0
 # socksio: 生图功能走 SOCKS5 代理时需要 (pip 安装 httpx[socks] 或直接 socksio)
 socksio>=1.0.0
+# numpy: 插画指令图片质量过滤 (色彩数统计)
+numpy>=1.24

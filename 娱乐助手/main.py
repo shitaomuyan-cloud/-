@@ -24,8 +24,8 @@ from core.plugin.web_pages import register_page, unregister_page
 __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
-    "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询，含 Web 管理后台，积分按群独立",
-    "version": "2.4.1",
+    "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询/二次元插画，含 Web 管理后台，积分按群独立",
+    "version": "2.4.2",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -624,6 +624,7 @@ _MENU_INFO = {
     "禁言": "🔇 **禁言**\n花积分禁言群成员，默认 1 分钟\n\n发送「禁言 @某人 [分钟]」执行",
     "撤回": "🗑️ **撤回**\n撤回机器人发过的消息（扣积分）\n\n先引用机器人消息，再发送「撤回」执行",
     "生图": "🎨 **生图**\n花积分 AI 绘图，可选比例\n\n发送「生图 描述」执行\n例：生图 一只猫",
+    "插画": "🖼️ **插画**\n随机一张二次元插画，图库每小时自动更新\n\n发送「插画」或「插画 二次元随机」执行",
 }
 
 
@@ -664,6 +665,7 @@ _MENU_P1_BTNS = [
 ]
 _MENU_P2_BTNS = [
     ("域名信息", "域名 baidu.com"), ("添加积分", "添加积分 @"), ("删除积分", "删除积分 @"), ("图床", "图床"),
+    ("插画", "插画"),
 ]
 
 
@@ -715,6 +717,7 @@ async def cmd_help(event, match):
             ("台风查询 名称/编号", "查详情与路径图", "系统"),
             ("台风列表 [年份]", "活跃/按年列表", "系统"),
             ("域名信息 域名", "Whois 域名查询", "系统"),
+            ("插画", "随机二次元插画，图库每小时更新", "系统"),
             ("娱乐菜单", "查看全部指令", "系统"),
         ]
         try:
@@ -4567,3 +4570,166 @@ def _collect_module_ns(prefix: str, src: str):
 _src_text = open(__file__, encoding='utf-8').read()
 games = _collect_module_ns('games', _src_text)
 points = _collect_module_ns('points', _src_text)
+
+
+# ============ 插画 (mikagogo P站美图) ============
+# 数据源: https://mikagogo.com/vip-illustration (本地 JSON, 每小时自动刷新)
+# 图片: 直链 townimg.com (httpx 下载直接发图, 不用图床)
+# 指令: 插画 / 插画 二次元随机
+# 过滤: 尺寸≥500、webp≥120KB/jpg≥60KB、色彩数>400 (排除空白/纯色/压缩糊图)
+_CHAHUA_JSON = os.path.join(_PLUGIN_DIR, "data", "mikagogo_1_25.json")
+
+_CHAHUA_UA = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "zh-CN,zh;q=0.9",
+}
+
+_chahua_cards: list = []
+_chahua_cards_loaded = False
+_chahua_cards_mtime = 0
+
+
+def _chahua_load_cards() -> list:
+    global _chahua_cards, _chahua_cards_loaded, _chahua_cards_mtime
+    try:
+        mtime = os.path.getmtime(_CHAHUA_JSON)
+    except OSError:
+        return _chahua_cards
+    if _chahua_cards_loaded and _chahua_cards and mtime == _chahua_cards_mtime:
+        return _chahua_cards
+    try:
+        with open(_CHAHUA_JSON, encoding="utf-8") as f:
+            data = json.load(f)
+        _chahua_cards = [c for c in data.get("cards", []) if c.get("img")]
+        _chahua_cards_mtime = mtime
+        _chahua_cards_loaded = True
+        log.info("插画图库已加载: %d 张图", len(_chahua_cards))
+    except Exception as e:  # noqa: BLE001
+        log.warning("插画图库加载失败: %s", e)
+    return _chahua_cards
+
+
+async def _chahua_download(url: str) -> bytes | None:
+    try:
+        async with httpx.AsyncClient(headers=_CHAHUA_UA, timeout=20) as c:
+            r = await c.get(url)
+            if r.status_code == 200 and len(r.content) >= 1000:
+                return r.content
+    except Exception as e:  # noqa: BLE001
+        log.warning("插画图片下载失败: %s", e)
+    return None
+
+
+def _chahua_has_content(data: bytes) -> bool:
+    """质量过滤: 尺寸≥500、webp≥120KB/jpg≥60KB、色彩数>400 (排除压缩糊图/空白)"""
+    try:
+        if len(data) < 30000:
+            return False
+        is_webp = data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+        if is_webp and len(data) < 120000:
+            return False  # webp 高压缩小文件 → 糊
+        from PIL import Image
+        import numpy as np
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        w, h = img.size
+        if w < 500 or h < 500:
+            return False
+        arr = np.asarray(img.resize((64, 64)))
+        uniq = len(np.unique(arr.reshape(-1, 3), axis=0))
+        return uniq > 400
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _chahua_to_jpeg(data: bytes) -> bytes:
+    """webp → JPEG (QQ 兼容); 其他格式原样返回"""
+    try:
+        if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            from PIL import Image
+            img = Image.open(io.BytesIO(data)).convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=88)
+            return buf.getvalue()
+    except Exception:  # noqa: BLE001
+        pass
+    return data
+
+
+def _chahua_truncate_title(title: str, n: int = 30) -> str:
+    """标题截断, 避免内容溢出"""
+    t = (title or "").strip().replace("\n", " ")
+    return t if len(t) <= n else t[:n - 1] + "…"
+
+
+async def _chahua_upload(data: bytes) -> str | None:
+    """走图床服务模块上传: upload_any 按启用顺序尝试, 第一个失败自动切备用床;
+    picgo.net 等被 QQ 拦截域名自动转存自身图床 (relay=True)。
+    全部图床失败返回 None, 由调用方回退直传。"""
+    try:
+        hosting = _get_hosting()
+        if hosting is None:
+            log.warning("插画图床: image_hosting 模块未加载")
+            return None
+        url = await hosting.upload_any(
+            data, f"chahua_{int(time.time())}.jpg",
+            token_manager=None, sender=None, relay=True,
+        )
+        if url:
+            log.info("插画图床上传成功: %s", url[:80])
+        else:
+            log.warning("插画图床: 所有图床均上传失败")
+        return url
+    except Exception as e:  # noqa: BLE001
+        log.warning("插画图床上传异常: %s", e)
+        return None
+
+
+async def random_illustration(max_try: int = 10):
+    """随机取一张详情正文图: 优先 jpg/png, webp 兜底; 带质量过滤"""
+    cards = _chahua_load_cards()
+    if not cards:
+        return None, None
+    # 优先高质量 jpg/png, webp 兜底
+    hi = [c for c in cards if not c["img"].endswith(".webp")]
+    pool = list(hi if len(hi) >= max_try // 2 else cards)
+    random.shuffle(pool)
+    for card in pool[:max_try]:
+        data = await _chahua_download(card["img"])
+        if data and _chahua_has_content(data):
+            return _chahua_to_jpeg(data), card.get("title", "")
+    # 兜底: 放宽过滤再来一轮
+    for card in random.sample(cards, min(8, len(cards))):
+        data = await _chahua_download(card["img"])
+        if data and len(data) >= 30000:
+            return _chahua_to_jpeg(data), card.get("title", "")
+    return None, None
+
+
+@handler(
+    r"^/?插画(?:\s+二次元随机)?\s*$",
+    name="插画",
+    desc="插画 二次元随机 → 随机一张二次元插画 (mikagogo)",
+    ignore_at_check=True,
+    priority=50,
+    block=True,
+)
+async def cmd_illustration(event, match):
+    jpeg, title = await random_illustration()
+    if not jpeg:
+        return await event.reply("❌ 暂时没找到合适的图，再试一次吧")
+    short = _chahua_truncate_title(title, 30)
+    # 单图片气泡 + caption = 接口标题 (无 emoji/附加文字)
+    # 优先走图床模块 (自动切换备用床); 图床全部失败时回退 bytes 直传
+    try:
+        img_url = await _chahua_upload(jpeg)
+        if img_url:
+            await event.reply_image(img_url, content=short)
+        else:
+            await event.reply_image(jpeg, content=short)
+    except Exception as e:  # noqa: BLE001
+        log.warning("插画发图失败: %s", e)
+        return await event.reply("❌ 图片发送失败，再试一次吧")
+    return None
