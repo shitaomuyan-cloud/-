@@ -4306,7 +4306,6 @@ def _draw_title(draw, W, title, right, pad, ft, fm):
     draw.text((pad, gap), t, font=_font(ft), fill=_INK)
     if right:
         draw.text((W - pad - right_w, gap + max((th - rh) // 2, 0)), right, font=_font(fm), fill=_MUTED)
-    draw.line((0, hh - 1, W, hh - 1), fill=_LINE)
     return hh
 
 
