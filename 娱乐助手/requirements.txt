@@ -5,3 +5,5 @@ Pillow>=10.0.0
 socksio>=1.0.0
 # numpy: 插画指令图片质量过滤 (色彩数统计)
 numpy>=1.24
+# nudenet: 插画指令发送前本地 NSFW 内容检测 (防 QQ 审核违规; 安装失败自动降级放行)
+nudenet>=3.4.2

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
 from pathlib import Path
 import threading
 import urllib.parse
@@ -25,7 +26,7 @@ __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询/二次元插画，含 Web 管理后台，积分按群独立",
-    "version": "2.4.2",
+    "version": "2.4.3",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -4592,6 +4593,153 @@ _chahua_cards_loaded = False
 _chahua_cards_mtime = 0
 
 
+# ============ 插画内容安全 (违规防护) ============
+# 目标: 降低 QQ 内容审核(40034006)触发率, 违规后自动换图并冷却, 避免高频踩雷被封
+# 1) 发送前: 本地 nudenet NSFW 检测, 暴露/擦边图直接跳过
+# 2) 发送后: 违规图 URL 进黑名单(持久化), 自动换图重试(最多3轮)
+# 3) 连续违规 3 次 → 指令冷却 10 分钟; 每日 30 次 / 每用户 15 秒频控
+_CHAHUA_BLACKLIST_PATH = os.path.join(_PLUGIN_DIR, "data", "chahua_blacklist.json")
+_CHAHUA_VIOLATION_LIMIT = 3       # 连续违规次数阈值
+_CHAHUA_COOLDOWN_SEC = 10 * 60    # 违规冷却时长 (秒)
+_CHAHUA_DAILY_LIMIT = 30          # 每日发送次数上限
+_CHAHUA_USER_GAP = 15             # 每用户调用间隔 (秒)
+_NSFW_HARD_CLASSES = frozenset({  # 敏感暴露类别 → 直接跳过
+    "exposed_anus", "exposed_breasts", "exposed_buttocks",
+    "exposed_female_genitalia", "exposed_male_genitalia", "exposed_pussy",
+})
+_NSFW_HARD_TH = 0.45              # 硬过滤阈值 (score 高于此即跳过)
+_NSFW_SOFT_CLASSES = frozenset({"armpits_exposed", "bellies_exposed", "feet_exposed"})
+_NSFW_SOFT_TH = 0.62              # 软过滤阈值 (轻微擦边, 二次元高发点)
+
+_chahua_blacklist: set = set()
+_chahua_blacklist_loaded = False
+_chahua_violations = 0
+_chahua_cooldown_until = 0.0
+_chahua_last_call: dict = {}      # uid -> ts
+_chahua_daily_calls: list = []    # 当日调用时间戳
+_nsfw_detector = None
+_nsfw_lock = threading.Lock()
+_chahua_send_url = contextvars.ContextVar("chahua_send_url", default="")
+_CHAHUA_HOOK_OWNER = "娱乐助手/插画"
+
+
+def _chahua_load_blacklist():
+    global _chahua_blacklist, _chahua_blacklist_loaded
+    try:
+        with open(_CHAHUA_BLACKLIST_PATH, encoding="utf-8") as f:
+            _chahua_blacklist = set(json.load(f).get("urls", []))
+        _chahua_blacklist_loaded = True
+    except Exception:  # noqa: BLE001
+        _chahua_blacklist = set()
+
+
+def _chahua_save_blacklist():
+    try:
+        with open(_CHAHUA_BLACKLIST_PATH, "w", encoding="utf-8") as f:
+            json.dump({"urls": sorted(_chahua_blacklist)}, f, ensure_ascii=False, indent=1)
+    except Exception as e:  # noqa: BLE001
+        log.warning("插画黑名单保存失败: %s", e)
+
+
+def _chahua_is_blacklisted(url: str) -> bool:
+    if not _chahua_blacklist_loaded:
+        _chahua_load_blacklist()
+    return url in _chahua_blacklist
+
+
+def _chahua_mark_violation(url: str):
+    """违规图入黑名单 + 连续违规计数, 超限进入冷却"""
+    global _chahua_violations, _chahua_cooldown_until
+    if url:
+        _chahua_blacklist.add(url)
+        _chahua_save_blacklist()
+    _chahua_violations += 1
+    if _chahua_violations >= _CHAHUA_VIOLATION_LIMIT:
+        _chahua_cooldown_until = time.time() + _CHAHUA_COOLDOWN_SEC
+        _chahua_violations = 0
+        log.warning("插画连续违规 %d 次, 指令冷却 %d 分钟", _CHAHUA_VIOLATION_LIMIT, _CHAHUA_COOLDOWN_SEC // 60)
+    else:
+        log.warning("插画图片违规(%d/%d): %s", _chahua_violations, _CHAHUA_VIOLATION_LIMIT, url[:80])
+
+
+def _chahua_in_cooldown() -> bool:
+    return time.time() < _chahua_cooldown_until
+
+
+def _chahua_check_rate(uid: str) -> str | None:
+    """频控: 返回 None 通过, 否则返回拒绝提示文案"""
+    now = time.time()
+    # 每日次数
+    _chahua_daily_calls[:] = [t for t in _chahua_daily_calls if now - t < 86400]
+    if len(_chahua_daily_calls) >= _CHAHUA_DAILY_LIMIT:
+        return f"📅 插画今日次数已用完（每日 {_CHAHUA_DAILY_LIMIT} 次）"
+    # 每用户间隔
+    last = _chahua_last_call.get(uid, 0)
+    if now - last < _CHAHUA_USER_GAP:
+        return f"⏳ 插画操作太频繁，请 {int(_CHAHUA_USER_GAP - (now - last))} 秒后再试"
+    _chahua_last_call[uid] = now
+    return None
+
+
+def _chahua_is_nsfw(data: bytes) -> bool:
+    """本地 NSFW 检测: 暴露/擦边 → True(跳过)。检测失败/模型不可用 → False(放行)"""
+    global _nsfw_detector
+    try:
+        with _nsfw_lock:
+            if _nsfw_detector is None:
+                from nudenet import NudeDetector
+                _nsfw_detector = NudeDetector()
+        tmp = os.path.join(tempfile.gettempdir(), f"chahua_nsfw_{int(time.time() * 1000)}.jpg")
+        with open(tmp, "wb") as f:
+            f.write(data)
+        try:
+            results = _nsfw_detector.detect(tmp)
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+        if not results:
+            return False
+        for item in results:
+            cls = str(item.get("class", "")).lower()
+            score = float(item.get("score", 0) or 0)
+            if cls in _NSFW_HARD_CLASSES and score >= _NSFW_HARD_TH:
+                return True
+            if cls in _NSFW_SOFT_CLASSES and score >= _NSFW_SOFT_TH:
+                return True
+        return False
+    except Exception as e:  # noqa: BLE001
+        log.warning("插画 NSFW 检测异常(放行): %s", e)
+        return False
+
+
+async def _on_send_failed(data):
+    """send_failed 钩子: 插画图片违规被拦截时静默记录黑名单, 不弹框架错误模板"""
+    code = data.get("code") or ""
+    resp = data.get("data") or {}
+    err_code = resp.get("err_code") if isinstance(resp, dict) else None
+    if code != 40034006 and err_code != 40034006:
+        return data  # 非违规, 不处理
+    url = _chahua_send_url.get()
+    if not url:
+        return data  # 不是插画发起的发送
+    _chahua_mark_violation(url)
+    log.info("插画违规已被静默处理(黑名单+自动换图)")
+    return None  # 已处理 → 框架不弹 api_error 模板
+
+
+def _chahua_register_hooks():
+    try:
+        from core.module.hook import get_hook_manager
+        hm = get_hook_manager()
+        hm.unregister_owner(_CHAHUA_HOOK_OWNER)  # 热重载防重复注册
+        hm.register("send_failed", _on_send_failed, owner=_CHAHUA_HOOK_OWNER, priority=90)
+    except Exception as e:  # noqa: BLE001
+        log.warning("插画 send_failed 钩子注册失败: %s", e)
+
+
+_chahua_register_hooks()
+
+
 def _chahua_load_cards() -> list:
     global _chahua_cards, _chahua_cards_loaded, _chahua_cards_mtime
     try:
@@ -4687,25 +4835,37 @@ async def _chahua_upload(data: bytes) -> str | None:
         return None
 
 
-async def random_illustration(max_try: int = 10):
-    """随机取一张详情正文图: 优先 jpg/png, webp 兜底; 带质量过滤"""
+async def _chahua_pick(max_try: int = 10):
+    """随机取一张安全图: 排除黑名单 + NSFW 过滤, 优先 jpg/png。
+    返回 (jpeg, title, url); 无可用图返回 (None, None, None)"""
     cards = _chahua_load_cards()
     if not cards:
-        return None, None
-    # 优先高质量 jpg/png, webp 兜底
+        return None, None, None
     hi = [c for c in cards if not c["img"].endswith(".webp")]
     pool = list(hi if len(hi) >= max_try // 2 else cards)
     random.shuffle(pool)
     for card in pool[:max_try]:
-        data = await _chahua_download(card["img"])
-        if data and _chahua_has_content(data):
-            return _chahua_to_jpeg(data), card.get("title", "")
-    # 兜底: 放宽过滤再来一轮
+        url = card["img"]
+        if _chahua_is_blacklisted(url):
+            continue
+        data = await _chahua_download(url)
+        if not data or not _chahua_has_content(data):
+            continue
+        if _chahua_is_nsfw(data):
+            log.info("插画跳过擦边图: %s", url[:80])
+            continue
+        return _chahua_to_jpeg(data), card.get("title", ""), url
+    # 兜底: 放宽质量过滤再来一轮 (仍走黑名单+NSFW)
     for card in random.sample(cards, min(8, len(cards))):
-        data = await _chahua_download(card["img"])
+        url = card["img"]
+        if _chahua_is_blacklisted(url):
+            continue
+        data = await _chahua_download(url)
         if data and len(data) >= 30000:
-            return _chahua_to_jpeg(data), card.get("title", "")
-    return None, None
+            if _chahua_is_nsfw(data):
+                continue
+            return _chahua_to_jpeg(data), card.get("title", ""), url
+    return None, None, None
 
 
 @handler(
@@ -4717,19 +4877,40 @@ async def random_illustration(max_try: int = 10):
     block=True,
 )
 async def cmd_illustration(event, match):
-    jpeg, title = await random_illustration()
-    if not jpeg:
-        return await event.reply("❌ 暂时没找到合适的图，再试一次吧")
-    short = _chahua_truncate_title(title, 30)
-    # 单图片气泡 + caption = 接口标题 (无 emoji/附加文字)
-    # 优先走图床模块 (自动切换备用床); 图床全部失败时回退 bytes 直传
-    try:
-        img_url = await _chahua_upload(jpeg)
-        if img_url:
-            await event.reply_image(img_url, content=short)
-        else:
-            await event.reply_image(jpeg, content=short)
-    except Exception as e:  # noqa: BLE001
-        log.warning("插画发图失败: %s", e)
-        return await event.reply("❌ 图片发送失败，再试一次吧")
-    return None
+    if _chahua_in_cooldown():
+        return await event.reply("🛡️ 插画内容正在审核冷却中，请 10 分钟后再试")
+    uid = _uid(event)
+    rate_msg = _chahua_check_rate(uid)
+    if rate_msg:
+        return await event.reply(rate_msg)
+    # 最多 3 轮: 违规后自动换图重试
+    for attempt in range(3):
+        jpeg, title, url = await _chahua_pick()
+        if not jpeg:
+            if attempt == 0:
+                return await event.reply("❌ 暂时没找到合适的图，再试一次吧")
+            break
+        short = _chahua_truncate_title(title, 30)
+        try:
+            # 标记当前发送的图 URL (send_failed 钩子据此识别插画违规)
+            token = _chahua_send_url.set(url)
+            try:
+                img_url = await _chahua_upload(jpeg)
+                if img_url:
+                    await event.reply_image(img_url, content=short)
+                else:
+                    await event.reply_image(jpeg, content=short)
+            finally:
+                _chahua_send_url.reset(token)
+        except Exception as e:  # noqa: BLE001
+            log.warning("插画发图失败: %s", e)
+            return await event.reply("❌ 图片发送失败，再试一次吧")
+        # 检查发送是否违规被拦截
+        err = getattr(event, "error", None)
+        err_code = err.get("err_code") if isinstance(err, dict) else None
+        if err_code == 40034006:
+            _chahua_mark_violation(url)
+            log.info("插画违规已换图重试 (第 %d 轮)", attempt + 1)
+            continue
+        return None
+    return await event.reply("🛡️ 图片内容被平台拦截，已自动换图仍失败，请稍后再试")
