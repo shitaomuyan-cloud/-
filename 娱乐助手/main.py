@@ -4898,6 +4898,9 @@ async def cmd_illustration(event, match):
             break
         short = _chahua_truncate_title(title, 30)
         try:
+            # 重置错误标记, 避免上一轮违规残留导致误判
+            with contextlib.suppress(Exception):
+                event.error = None
             # 标记当前发送的图 URL (send_failed 钩子据此识别插画违规)
             token = _chahua_send_url.set(url)
             try:
@@ -4911,12 +4914,19 @@ async def cmd_illustration(event, match):
         except Exception as e:  # noqa: BLE001
             log.warning("插画发图失败: %s", e)
             return await event.reply("❌ 图片发送失败，再试一次吧")
-        # 检查发送是否违规被拦截
+        # 检查发送是否违规被拦截 (QQ 返回字段可能是 code 或 err_code)
         err = getattr(event, "error", None)
-        err_code = err.get("err_code") if isinstance(err, dict) else None
-        if err_code == 40034006:
-            _chahua_mark_violation(url)
+        is_violation = (
+            isinstance(err, dict)
+            and (err.get("code") == 40034006 or err.get("err_code") == 40034006)
+        )
+        if is_violation:
+            # 黑名单/计数已由 send_failed 钩子处理, 这里只负责换图重试
             log.info("插画违规已换图重试 (第 %d 轮)", attempt + 1)
             continue
+        if isinstance(err, dict) and err:
+            # 非违规发送失败 → 明确提示, 不静默
+            log.warning("插画发送失败: %s", err)
+            return await event.reply("❌ 图片发送失败，再试一次吧")
         return None
     return await event.reply("🛡️ 图片内容被平台拦截，已自动换图仍失败，请稍后再试")
