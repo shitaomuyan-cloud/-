@@ -4774,7 +4774,8 @@ async def _chahua_download(url: str) -> bytes | None:
 
 
 def _chahua_has_content(data: bytes) -> bool:
-    """质量过滤: 尺寸≥500、webp≥120KB/jpg≥60KB、色彩数>400 (排除压缩糊图/空白)"""
+    """质量过滤: 尺寸≥500、webp≥120KB/jpg≥60KB、色彩数>400 (排除压缩糊图/空白)
+    numpy 缺失时自动降级: 仅做尺寸/大小过滤, 不影响发图"""
     try:
         if len(data) < 30000:
             return False
@@ -4782,11 +4783,14 @@ def _chahua_has_content(data: bytes) -> bool:
         if is_webp and len(data) < 120000:
             return False  # webp 高压缩小文件 → 糊
         from PIL import Image
-        import numpy as np
         img = Image.open(io.BytesIO(data)).convert("RGB")
         w, h = img.size
         if w < 500 or h < 500:
             return False
+        try:
+            import numpy as np
+        except Exception:  # noqa: BLE001
+            return True  # numpy 缺失: 跳过色彩统计
         arr = np.asarray(img.resize((64, 64)))
         uniq = len(np.unique(arr.reshape(-1, 3), axis=0))
         return uniq > 400
