@@ -4681,6 +4681,7 @@ _chahua_user_lock_until: dict = {}     # uid -> 组间 15 秒锁定解除时间
 _nsfw_detector = None
 _nsfw_lock = threading.Lock()
 _chahua_send_url = contextvars.ContextVar("chahua_send_url", default="")
+_chahua_send_outcome = contextvars.ContextVar("chahua_send_outcome", default="")
 _CHAHUA_HOOK_OWNER = "娱乐助手/插画"
 
 
@@ -4802,6 +4803,7 @@ async def _on_send_failed(data):
     if not url:
         return data  # 不是插画发起的发送
     _chahua_mark_violation(url)
+    _chahua_send_outcome.set("violation")  # 跨 contextvar 通知指令内换图重试
     log.info("插画违规已被静默处理(黑名单+自动换图)")
     return None  # 已处理 → 框架不弹 api_error 模板
 
@@ -4985,9 +4987,10 @@ async def cmd_illustration(event, match):
             break
         short = _chahua_truncate_title(title, 30)
         try:
-            # 重置错误标记, 避免上一轮违规残留导致误判
+            # 重置错误标记 + 违规标记, 避免上一轮残留导致误判
             with contextlib.suppress(Exception):
                 event.error = None
+            out_token = _chahua_send_outcome.set("")
             # 标记当前发送的图 URL (send_failed 钩子据此识别插画违规)
             token = _chahua_send_url.set(url)
             try:
@@ -4998,17 +5001,21 @@ async def cmd_illustration(event, match):
                     await event.reply_image(jpeg, content=short)
             finally:
                 _chahua_send_url.reset(token)
+                _chahua_send_outcome.reset(out_token)
         except Exception as e:  # noqa: BLE001
             log.warning("插画发图失败: %s", e)
             return await event.reply("❌ 图片发送失败，再试一次吧")
-        # 检查发送是否违规被拦截 (QQ 返回字段可能是 code 或 err_code)
+        # 检查发送是否违规被拦截 (双保险: send_failed 钩子标记 + event.error 字段)
+        outcome = _chahua_send_outcome.get()
         err = getattr(event, "error", None)
+        err_code = err.get("code") if isinstance(err, dict) else None
+        err_nested = (err.get("data") or {}).get("err_code") if isinstance(err, dict) else None
         is_violation = (
-            isinstance(err, dict)
-            and (err.get("code") == 40034006 or err.get("err_code") == 40034006)
+            outcome == "violation"
+            or err_code == 40034006
+            or err_nested == 40034006
         )
         if is_violation:
-            # 黑名单/计数已由 send_failed 钩子处理, 这里只负责换图重试
             log.info("插画违规已换图重试 (第 %d 轮)", attempt + 1)
             continue
         if isinstance(err, dict) and err:
