@@ -2287,6 +2287,7 @@ def register_routes():
         ("GET", "groups", _api_groups, True),
         ("GET", "hosting", _api_hosting, True),
         ("POST", "hosting", _api_save_hosting, True),
+        ("GET", "chahua_stats", _api_chahua_stats, True),
     ]
     for method, path, handler, auth in routes:
         register_route(method, f"{PREFIX}/{path}", handler, auth=auth)
@@ -2580,6 +2581,39 @@ async def _api_hosting(request):
     """GET: 返回图床全部配置。"""
     try:
         return web.json_response({"success": True, "data": _hosting_cfg()})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def _api_chahua_stats(request):
+    """GET: 插画图库采集与检测统计 (Web 首页展示)。"""
+    try:
+        cards = _chahua_load_cards()
+        now = time.time()
+        next_in = 0
+        task = _chahua_refresh_task
+        if task and not task.done():
+            if _chahua_stats["last_refresh"]:
+                next_in = _CHAHUA_REFRESH_INTERVAL - (now - _chahua_stats["last_refresh"])
+            else:
+                next_in = _CHAHUA_REFRESH_FIRST_DELAY - (now - 0)
+                if next_in < 0:
+                    next_in = 0
+            if next_in < 0:
+                next_in = 0
+        return web.json_response({"success": True, "data": {
+            "cards": len(cards),
+            "blacklist": len(_chahua_blacklist),
+            "last_refresh": _chahua_stats["last_refresh"],
+            "refresh_result": _chahua_stats["refresh_result"],
+            "refresh_running": _chahua_stats["refresh_running"],
+            "next_refresh_in": int(next_in),
+            "detect_total": _chahua_stats["detect_total"],
+            "detect_blocked": _chahua_stats["detect_blocked"],
+            "violations": _chahua_stats["violations"],
+            "model_ready": _nsfw_detector is not None,
+            "interval_min": _CHAHUA_REFRESH_INTERVAL // 60,
+        }})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)})
 
@@ -4610,11 +4644,21 @@ _NSFW_HARD_CLASSES = frozenset({  # nudenet 3.x 敏感暴露类别 → QQ 必拦
     "female_breast_exposed", "female_genitalia_exposed", "male_genitalia_exposed",
     "anus_exposed", "buttocks_exposed", "male_breast_exposed",
 })
-_NSFW_HARD_TH = 0.60              # 硬过滤阈值 (更确定才拦截, 减少二次元画风误杀)
+_NSFW_HARD_TH = 0.85              # 硬过滤阈值: 只拦最高置信度暴露 (QQ 必拦级), 其余交给 QQ 审核+黑名单兜底
 _REVEAL_CLASSES = frozenset({     # 清凉信号: 露腋/露肚/露腿
     "armpits_exposed", "belly_exposed", "feet_exposed",
 })
 _REVEAL_MIN = 0.40                # 清凉判定阈值: 任一信号 ≥ 此值视为"不严实"
+
+# 插画统计 (供 Web 首页展示)
+_chahua_stats = {
+    "detect_total": 0,        # AI 检测总次数
+    "detect_blocked": 0,      # AI 拦截数 (最高置信暴露)
+    "violations": 0,          # QQ 违规总次数
+    "last_refresh": 0.0,      # 最近一次采集完成时间戳
+    "refresh_result": "",     # 最近采集结果描述
+    "refresh_running": False, # 采集进行中
+}
 
 _chahua_blacklist: set = set()
 _chahua_blacklist_loaded = False
@@ -4655,6 +4699,7 @@ def _chahua_is_blacklisted(url: str) -> bool:
 def _chahua_mark_violation(url: str):
     """违规图入黑名单 + 连续违规计数, 超限进入冷却"""
     global _chahua_violations, _chahua_cooldown_until
+    _chahua_stats["violations"] += 1
     if url:
         _chahua_blacklist.add(url)
         _chahua_save_blacklist()
@@ -4718,6 +4763,10 @@ def _chahua_analyze(data: bytes):
                 nsfw = True
             if cls in _REVEAL_CLASSES and score > reveal:
                 reveal = score
+        # 统计
+        _chahua_stats["detect_total"] += 1
+        if nsfw:
+            _chahua_stats["detect_blocked"] += 1
         return nsfw, reveal
     except Exception as e:  # noqa: BLE001
         log.warning("插画 NSFW 检测异常(放行): %s", e)
@@ -5052,38 +5101,46 @@ async def _chahua_refresh_once():
     if _chahua_refresh_lock.locked():
         return
     async with _chahua_refresh_lock:
+        _chahua_stats["refresh_running"] = True
         log.info("插画图库自动更新: 开始采集")
-        items = await _chahua_fetch_list_pages()
-        if not items:
-            log.warning("插画图库自动更新: 列表采集为空, 本轮跳过")
-            return
-        sem = asyncio.Semaphore(8)
-        cards = []
-
-        async def one(it):
-            async with sem:
-                imgs = await _chahua_fetch_detail_images(it["url"])
-                return [{"img": u, "title": it["title"], "post": it["url"]} for u in imgs]
-
-        results = await asyncio.gather(*(one(it) for it in items))
-        for rs in results:
-            cards.extend(rs)
-        seen, uniq = set(), []
-        for c in cards:
-            if c["img"] not in seen:
-                seen.add(c["img"])
-                uniq.append(c)
-        payload = {"site": "https://mikagogo.com/vip-illustration", "pages": _CHAHUA_LIST_PAGES,
-                   "count": len(uniq), "cards": uniq, "detail_only": True}
         try:
-            os.makedirs(os.path.dirname(_CHAHUA_JSON), exist_ok=True)
-            tmp = _CHAHUA_JSON + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, _CHAHUA_JSON)  # 原子替换, 采集失败/中断不会损坏图库
-            log.info("插画图库自动更新完成: %d 张 (%d 个详情页)", len(uniq), len(items))
-        except Exception as e:  # noqa: BLE001
-            log.warning("插画图库写入失败: %s", e)
+            items = await _chahua_fetch_list_pages()
+            if not items:
+                _chahua_stats["refresh_result"] = "列表采集为空, 本轮跳过"
+                log.warning("插画图库自动更新: 列表采集为空, 本轮跳过")
+                return
+            sem = asyncio.Semaphore(8)
+            cards = []
+
+            async def one(it):
+                async with sem:
+                    imgs = await _chahua_fetch_detail_images(it["url"])
+                    return [{"img": u, "title": it["title"], "post": it["url"]} for u in imgs]
+
+            results = await asyncio.gather(*(one(it) for it in items))
+            for rs in results:
+                cards.extend(rs)
+            seen, uniq = set(), []
+            for c in cards:
+                if c["img"] not in seen:
+                    seen.add(c["img"])
+                    uniq.append(c)
+            payload = {"site": "https://mikagogo.com/vip-illustration", "pages": _CHAHUA_LIST_PAGES,
+                       "count": len(uniq), "cards": uniq, "detail_only": True}
+            try:
+                os.makedirs(os.path.dirname(_CHAHUA_JSON), exist_ok=True)
+                tmp = _CHAHUA_JSON + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=1)
+                os.replace(tmp, _CHAHUA_JSON)  # 原子替换, 采集失败/中断不会损坏图库
+                _chahua_stats["last_refresh"] = time.time()
+                _chahua_stats["refresh_result"] = f"成功 {len(uniq)} 张 ({len(items)} 详情页)"
+                log.info("插画图库自动更新完成: %d 张 (%d 个详情页)", len(uniq), len(items))
+            except Exception as e:  # noqa: BLE001
+                _chahua_stats["refresh_result"] = f"写入失败: {e}"
+                log.warning("插画图库写入失败: %s", e)
+        finally:
+            _chahua_stats["refresh_running"] = False
 
 
 async def _chahua_refresh_loop():
