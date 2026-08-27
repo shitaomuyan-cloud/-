@@ -4374,9 +4374,7 @@ def compose_detail(map_blob, view, note=''):
             draw.text((vx, y + j * lh), line, font=_font(fs), fill=_INK)
         y += max(len(wrapped), 1) * lh
     if tip_blocks:
-        y += 2
-        draw.line((pad, y, W - pad, y), fill=_LINE)
-        y += 4
+        y += 6  # 防护区与上方信息区分隔留白 (去掉横线)
         lab = '防护'
         draw.text((pad, y), lab, font=_font(fs), fill=_MUTED)
         vx = pad + _tw(probe, lab, _font(fs))[0] + 10
