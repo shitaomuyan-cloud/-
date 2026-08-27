@@ -4606,12 +4606,15 @@ _CHAHUA_VIOLATION_LIMIT = 3       # 连续违规次数阈值
 _CHAHUA_COOLDOWN_SEC = 10 * 60    # 违规冷却时长 (秒)
 _CHAHUA_BURST_LIMIT = 5           # 每用户每 5 次为一组
 _CHAHUA_BURST_COOLDOWN = 15       # 发满 5 次后限制 15 秒, 然后解除
-_NSFW_HARD_CLASSES = frozenset({  # 敏感暴露类别 → 直接跳过 (QQ 必拦级别)
-    "exposed_anus", "exposed_breasts", "exposed_buttocks",
-    "exposed_female_genitalia", "exposed_male_genitalia", "exposed_pussy",
+_NSFW_HARD_CLASSES = frozenset({  # nudenet 3.x 敏感暴露类别 → QQ 必拦, 直接跳过
+    "female_breast_exposed", "female_genitalia_exposed", "male_genitalia_exposed",
+    "anus_exposed", "buttocks_exposed", "male_breast_exposed",
 })
 _NSFW_HARD_TH = 0.60              # 硬过滤阈值 (更确定才拦截, 减少二次元画风误杀)
-# 软过滤已移除: 腋下/肚子/脚等二次元常见元素不再拦截, 交给 QQ 审核与黑名单兜底
+_REVEAL_CLASSES = frozenset({     # 清凉信号: 露腋/露肚/露腿
+    "armpits_exposed", "belly_exposed", "feet_exposed",
+})
+_REVEAL_MIN = 0.40                # 清凉判定阈值: 任一信号 ≥ 此值视为"不严实"
 
 _chahua_blacklist: set = set()
 _chahua_blacklist_loaded = False
@@ -4685,8 +4688,11 @@ def _chahua_check_rate(uid: str) -> str | None:
     return None
 
 
-def _chahua_is_nsfw(data: bytes) -> bool:
-    """本地 NSFW 检测: 暴露/擦边 → True(跳过)。检测失败/模型不可用 → False(放行)"""
+def _chahua_analyze(data: bytes):
+    """本地检测: 返回 (is_nsfw, reveal_score)
+    - is_nsfw: 敏感暴露(QQ必拦) → True 需跳过
+    - reveal_score: 清凉度 0~1, 越高越清凉 (露腋/露肚/露腿信号最大值)
+    检测失败/模型不可用 → (False, 0.0) 放行, 不阻塞发图"""
     global _nsfw_detector
     try:
         with _nsfw_lock:
@@ -4702,16 +4708,26 @@ def _chahua_is_nsfw(data: bytes) -> bool:
             with contextlib.suppress(OSError):
                 os.remove(tmp)
         if not results:
-            return False
+            return False, 0.0
+        nsfw = False
+        reveal = 0.0
         for item in results:
             cls = str(item.get("class", "")).lower()
             score = float(item.get("score", 0) or 0)
             if cls in _NSFW_HARD_CLASSES and score >= _NSFW_HARD_TH:
-                return True
-        return False
+                nsfw = True
+            if cls in _REVEAL_CLASSES and score > reveal:
+                reveal = score
+        return nsfw, reveal
     except Exception as e:  # noqa: BLE001
         log.warning("插画 NSFW 检测异常(放行): %s", e)
-        return False
+        return False, 0.0
+
+
+def _chahua_is_nsfw(data: bytes) -> bool:
+    """兼容入口: 是否敏感暴露 (QQ必拦级别)"""
+    nsfw, _ = _chahua_analyze(data)
+    return nsfw
 
 
 async def _on_send_failed(data):
@@ -4841,8 +4857,8 @@ async def _chahua_upload(data: bytes) -> str | None:
         return None
 
 
-async def _chahua_pick(max_try: int = 10):
-    """随机取一张安全图: 排除黑名单 + NSFW 过滤, 优先 jpg/png。
+async def _chahua_pick(max_try: int = 10, require_reveal: bool = True):
+    """随机取一张图: 优先清凉(露腋/露肚/露腿)且不违规; 找不到则退回不违规的普通图。
     返回 (jpeg, title, url); 无可用图返回 (None, None, None)"""
     cards = _chahua_load_cards()
     if not cards:
@@ -4850,6 +4866,7 @@ async def _chahua_pick(max_try: int = 10):
     hi = [c for c in cards if not c["img"].endswith(".webp")]
     pool = list(hi if len(hi) >= max_try // 2 else cards)
     random.shuffle(pool)
+    # 第一轮: 优先清凉图 (非违规 + 清凉分达标)
     for card in pool[:max_try]:
         url = card["img"]
         if _chahua_is_blacklisted(url):
@@ -4857,18 +4874,22 @@ async def _chahua_pick(max_try: int = 10):
         data = await _chahua_download(url)
         if not data or not _chahua_has_content(data):
             continue
-        if _chahua_is_nsfw(data):
-            log.info("插画跳过擦边图: %s", url[:80])
+        nsfw, reveal = _chahua_analyze(data)
+        if nsfw:
+            log.info("插画跳过违规图: %s", url[:80])
             continue
+        if require_reveal and reveal < _REVEAL_MIN:
+            continue  # 太严实, 第一轮跳过 (等第二轮兜底)
         return _chahua_to_jpeg(data), card.get("title", ""), url
-    # 兜底: 放宽质量过滤再来一轮 (仍走黑名单+NSFW)
+    # 兜底: 只要不违规就收 (保证出图, 穿得严实也发)
     for card in random.sample(cards, min(8, len(cards))):
         url = card["img"]
         if _chahua_is_blacklisted(url):
             continue
         data = await _chahua_download(url)
         if data and len(data) >= 30000:
-            if _chahua_is_nsfw(data):
+            nsfw, _ = _chahua_analyze(data)
+            if nsfw:
                 continue
             return _chahua_to_jpeg(data), card.get("title", ""), url
     return None, None, None
