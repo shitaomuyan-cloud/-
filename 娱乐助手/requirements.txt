@@ -1,3 +1,5 @@
 # 娱乐助手插件依赖
+# Pillow: 台风路径图/资料卡/标题图绘制 (框架 requirements 未包含, 必须声明)
+Pillow>=10.0.0
 # socksio: 生图功能走 SOCKS5 代理时需要 (pip 安装 httpx[socks] 或直接 socksio)
 socksio>=1.0.0

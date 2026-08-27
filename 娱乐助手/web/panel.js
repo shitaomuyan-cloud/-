@@ -19,9 +19,10 @@ const COMMANDS=[
 {n:"购买反甲 [数量]",d:"花积分购护盾防抢，如 购买反甲2",tag:"互动"},{n:"单身狗 @某人 或 QQ号",d:"生成单身狗恶搞配图",tag:"互动"},{n:"马内 @某人 或 QQ号",d:"生成求财配图",tag:"互动"},{n:"发红包 积分 份数 口令",d:"口令1~4位数字，30分钟未领完退回",tag:"红包"},
 {n:"抢红包 [口令]",d:"直接抢或按口令抢",tag:"红包"},{n:"红包列表",d:"查看可抢红包",tag:"红包"},
 {n:"禁言 @某人 [分钟]",d:"花积分禁言，默认1分钟",tag:"消耗"},{n:"撤回",d:"引用消息后发送本指令撤回",tag:"消耗"},
-{n:"生图 描述",d:"花积分AI绘图，弹按钮选比例",tag:"消耗"},{n:"添加积分",d:"管理员加积分",tag:"管理"},{n:"删除积分",d:"管理员扣积分",tag:"管理"},
-{n:"台风",d:"查询当前最强台风 + 路径图",tag:"系统"},
+{n:"生图 描述",d:"花积分AI绘图，弹按钮选比例",tag:"消耗"},{n:"添加积分 @",d:"管理员加积分",tag:"管理"},{n:"删除积分 @",d:"管理员扣积分",tag:"管理"},
+{n:"台风",d:"查询当前最强台风 + 路径图",tag:"系统"},{n:"域名信息",d:"Whois 域名查询，如 域名 baidu.com",tag:"系统"},{n:"图床",d:"发「图床」后发图/视频自动上传",tag:"系统"},
 ];
+const CAT_ORDER=["积分","互动","红包","消耗","管理","系统"];
 const TITLES={overview:"数据总览",config:"规则配置",users:"用户管理",redpacks:"红包管理",about:"指令说明"};
 function switchPage(name){const btns=document.querySelectorAll(".bottom-nav button");btns.forEach(b=>b.classList.toggle("active",b.dataset.page===name));document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active",p.id==="page-"+name));const t=document.getElementById("page-title");if(t)t.textContent=TITLES[name]||"";window.scrollTo(0,0);}
 function bindNav(){document.querySelectorAll(".bottom-nav button[data-page]").forEach(b=>{b.onclick=()=>switchPage(b.dataset.page);});document.querySelectorAll("[data-open-page]").forEach(b=>{b.onclick=()=>switchPage(b.dataset.openPage);});}
