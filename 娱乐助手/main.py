@@ -3656,7 +3656,7 @@ _PUB_PAGES = ('probability.html',) + tuple(f'probability-img{i}.html' for i in r
 _SESSION = None
 _SESSION_LOCK = asyncio.Lock()
 _MEM, _LOCKS = {}, {}
-_LIST_TTL, _VIEW_TTL, _MAP_TTL, _IMG_TTL = 60, 90, 180, 180  # 图：磁盘/图床 3 分钟
+_LIST_TTL, _VIEW_TTL, _MAP_TTL, _IMG_TTL = 300, 600, 900, 900  # 台风数据数小时才更新: 列表5分钟/详情10分钟/图15分钟缓存
 _PAGE_SIZE = 12
 _FONT_CANDIDATES = (
     'C:/Windows/Fonts/msyh.ttc', 'C:/Windows/Fonts/msyh.ttf', 'C:/Windows/Fonts/simhei.ttf',
