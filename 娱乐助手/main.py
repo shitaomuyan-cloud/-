@@ -2585,6 +2585,17 @@ async def _api_hosting(request):
         return web.json_response({"success": False, "error": str(e)})
 
 
+def _chahua_model_ready() -> bool:
+    """检测模型是否可用: 已加载实例 或 nudenet 包已安装 (惰性加载, 未加载也算就绪)"""
+    if _nsfw_detector is not None:
+        return True
+    try:
+        import importlib.util
+        return importlib.util.find_spec("nudenet") is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def _api_chahua_stats(request):
     """GET: 插画图库采集与检测统计 (Web 首页展示)。"""
     try:
@@ -2611,7 +2622,8 @@ async def _api_chahua_stats(request):
             "detect_total": _chahua_stats["detect_total"],
             "detect_blocked": _chahua_stats["detect_blocked"],
             "violations": _chahua_stats["violations"],
-            "model_ready": _nsfw_detector is not None,
+            "model_ready": _chahua_model_ready(),
+            "model_loaded": _nsfw_detector is not None,
             "interval_min": _CHAHUA_REFRESH_INTERVAL // 60,
         }})
     except Exception as e:

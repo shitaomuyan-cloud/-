@@ -43,7 +43,7 @@ function renderChahuaStats(){const d=window.CHAHUA_STATS||{};const el=document.g
 ["下次采集",nxt,"后台定时任务"],
 ["AI 检测",(d.detect_total||0)+" 次","拦截 "+(d.detect_blocked||0)+" 张"],
 ["QQ 违规",(d.violations||0)+" 次","已进黑名单 "+(d.blacklist||0)+" 条"],
-["检测模型",d.model_ready?"已就绪":"未安装(自动放行)","本地 nudenet"],
+["检测模型",d.model_ready?(d.model_loaded?"已就绪":"已就绪 · 首次发图时加载"):"未安装(自动放行)","本地 nudenet"],
 ];el.innerHTML=rows.map(r=>'<div class="row"><span>'+esc(r[0])+'</span><b>'+esc(r[1])+' <small>'+esc(r[2])+'</small></b></div>').join("");}
 async function loadChahuaStats(){try{window.CHAHUA_STATS=(await api("GET","chahua_stats")).data||{};renderChahuaStats();}catch(e){/* 静默 */}}
 const CFG_MAP={sign_lo:"cfg-sign-lo",sign_hi:"cfg-sign-hi",lottery_cost:"cfg-lottery-cost",lottery_lo:"cfg-lottery-lo",lottery_hi:"cfg-lottery-hi",lottery_win_rate:"cfg-lottery-win",robbery_lo:"cfg-robbery-lo",robbery_hi:"cfg-robbery-hi",robbery_rate:"cfg-robbery-rate",mute_cost:"cfg-mute-cost",revoke_cost:"cfg-revoke-cost",draw_cost:"cfg-draw-cost",armor_cost:"cfg-armor-cost",draw_api_base:"cfg-draw-api-base",draw_api_key:"cfg-draw-api-key",draw_model:"cfg-draw-model",draw_proxy:"cfg-draw-proxy"};
