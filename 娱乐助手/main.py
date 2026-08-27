@@ -25,8 +25,8 @@ from core.plugin.web_pages import register_page, unregister_page
 __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
-    "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询/二次元插画，含 Web 管理后台，积分按群独立",
-    "version": "2.4.3",
+    "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询出图/二次元插画，含 Web 管理后台，积分按群独立",
+    "version": "2.4.4",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
