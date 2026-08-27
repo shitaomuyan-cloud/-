@@ -4601,8 +4601,8 @@ _chahua_cards_mtime = 0
 _CHAHUA_BLACKLIST_PATH = os.path.join(_PLUGIN_DIR, "data", "chahua_blacklist.json")
 _CHAHUA_VIOLATION_LIMIT = 3       # 连续违规次数阈值
 _CHAHUA_COOLDOWN_SEC = 10 * 60    # 违规冷却时长 (秒)
-_CHAHUA_DAILY_LIMIT = 30          # 每日发送次数上限
-_CHAHUA_USER_GAP = 15             # 每用户调用间隔 (秒)
+_CHAHUA_BURST_LIMIT = 5           # 每用户每 5 次为一组
+_CHAHUA_BURST_COOLDOWN = 15       # 发满 5 次后限制 15 秒, 然后解除
 _NSFW_HARD_CLASSES = frozenset({  # 敏感暴露类别 → 直接跳过
     "exposed_anus", "exposed_breasts", "exposed_buttocks",
     "exposed_female_genitalia", "exposed_male_genitalia", "exposed_pussy",
@@ -4615,8 +4615,8 @@ _chahua_blacklist: set = set()
 _chahua_blacklist_loaded = False
 _chahua_violations = 0
 _chahua_cooldown_until = 0.0
-_chahua_last_call: dict = {}      # uid -> ts
-_chahua_daily_calls: list = []    # 当日调用时间戳
+_chahua_user_count: dict = {}          # uid -> 当前组内已发次数
+_chahua_user_lock_until: dict = {}     # uid -> 组间 15 秒锁定解除时间
 _nsfw_detector = None
 _nsfw_lock = threading.Lock()
 _chahua_send_url = contextvars.ContextVar("chahua_send_url", default="")
@@ -4667,17 +4667,19 @@ def _chahua_in_cooldown() -> bool:
 
 
 def _chahua_check_rate(uid: str) -> str | None:
-    """频控: 返回 None 通过, 否则返回拒绝提示文案"""
+    """频控: 不限总次数; 每用户每发满 5 次, 限制 15 秒后自动解除。
+    返回 None 通过, 否则返回拒绝提示文案"""
     now = time.time()
-    # 每日次数
-    _chahua_daily_calls[:] = [t for t in _chahua_daily_calls if now - t < 86400]
-    if len(_chahua_daily_calls) >= _CHAHUA_DAILY_LIMIT:
-        return f"📅 插画今日次数已用完（每日 {_CHAHUA_DAILY_LIMIT} 次）"
-    # 每用户间隔
-    last = _chahua_last_call.get(uid, 0)
-    if now - last < _CHAHUA_USER_GAP:
-        return f"⏳ 插画操作太频繁，请 {int(_CHAHUA_USER_GAP - (now - last))} 秒后再试"
-    _chahua_last_call[uid] = now
+    lock_until = _chahua_user_lock_until.get(uid, 0)
+    if now < lock_until:
+        return f"⏳ 插画发太快啦，请 {int(lock_until - now) + 1} 秒后再试"
+    cnt = _chahua_user_count.get(uid, 0) + 1
+    if cnt >= _CHAHUA_BURST_LIMIT:
+        # 发满 5 次 → 锁定 15 秒, 计数清零; 本次放行
+        _chahua_user_lock_until[uid] = now + _CHAHUA_BURST_COOLDOWN
+        _chahua_user_count[uid] = 0
+        return None
+    _chahua_user_count[uid] = cnt
     return None
 
 
