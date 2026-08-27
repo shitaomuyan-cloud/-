@@ -4606,13 +4606,12 @@ _CHAHUA_VIOLATION_LIMIT = 3       # 连续违规次数阈值
 _CHAHUA_COOLDOWN_SEC = 10 * 60    # 违规冷却时长 (秒)
 _CHAHUA_BURST_LIMIT = 5           # 每用户每 5 次为一组
 _CHAHUA_BURST_COOLDOWN = 15       # 发满 5 次后限制 15 秒, 然后解除
-_NSFW_HARD_CLASSES = frozenset({  # 敏感暴露类别 → 直接跳过
+_NSFW_HARD_CLASSES = frozenset({  # 敏感暴露类别 → 直接跳过 (QQ 必拦级别)
     "exposed_anus", "exposed_breasts", "exposed_buttocks",
     "exposed_female_genitalia", "exposed_male_genitalia", "exposed_pussy",
 })
-_NSFW_HARD_TH = 0.45              # 硬过滤阈值 (score 高于此即跳过)
-_NSFW_SOFT_CLASSES = frozenset({"armpits_exposed", "bellies_exposed", "feet_exposed"})
-_NSFW_SOFT_TH = 0.62              # 软过滤阈值 (轻微擦边, 二次元高发点)
+_NSFW_HARD_TH = 0.60              # 硬过滤阈值 (更确定才拦截, 减少二次元画风误杀)
+# 软过滤已移除: 腋下/肚子/脚等二次元常见元素不再拦截, 交给 QQ 审核与黑名单兜底
 
 _chahua_blacklist: set = set()
 _chahua_blacklist_loaded = False
@@ -4708,8 +4707,6 @@ def _chahua_is_nsfw(data: bytes) -> bool:
             cls = str(item.get("class", "")).lower()
             score = float(item.get("score", 0) or 0)
             if cls in _NSFW_HARD_CLASSES and score >= _NSFW_HARD_TH:
-                return True
-            if cls in _NSFW_SOFT_CLASSES and score >= _NSFW_SOFT_TH:
                 return True
         return False
     except Exception as e:  # noqa: BLE001
