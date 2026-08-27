@@ -598,10 +598,13 @@ async def _init():
         register_page(key=_PAGE_KEY, label="娱乐助手", source="plugin", source_name="entertainment", html_file=_PANEL_HTML)
     with contextlib.suppress(Exception):
         webpanel.register_routes()
+    # 插画图库定时自动更新 (内置; playwright 缺失时自动跳过)
+    _chahua_start_refresh_task()
 
 
 @on_unload
 async def _cleanup():
+    _chahua_stop_refresh_task()
     with contextlib.suppress(Exception):
         webpanel.unregister_routes()
     with contextlib.suppress(Exception):
@@ -4935,3 +4938,150 @@ async def cmd_illustration(event, match):
             return await event.reply("❌ 图片发送失败，再试一次吧")
         return None
     return await event.reply("🛡️ 图片内容被平台拦截，已自动换图仍失败，请稍后再试")
+
+
+# ============ 插画图库自动采集与定时更新 (内置, 免外部脚本) ============
+# 别人安装后无需任何外部脚本: 插件每小时自动采集 mikagogo 更新图库。
+# playwright 为可选依赖: 未安装时自动跳过更新, 图库保持已有数据, 不影响发图。
+_chahua_refresh_task = None
+_chahua_refresh_lock = asyncio.Lock()
+_CHAHUA_REFRESH_INTERVAL = 3600         # 更新周期: 每小时
+_CHAHUA_REFRESH_FIRST_DELAY = 300       # 插件加载后 5 分钟首次采集
+_CHAHUA_LIST_PAGES = 25                 # 采集列表页数
+_CHAHUA_LIST_BASE = "https://mikagogo.com/vip-illustration/page"
+_CHAHUA_DETAIL_IMG_RE = re.compile(
+    r"https://(?:cc|bu|mk)-img\.townimg\.com/uploads/[^\"'\s]+\.(?:webp|jpg|jpeg|png)"
+)
+_CHAHUA_THUMB_RE = re.compile(r"-\d+x\d+\.")
+
+
+def _chahua_start_refresh_task():
+    global _chahua_refresh_task
+    if _chahua_refresh_task and not _chahua_refresh_task.done():
+        return
+    _chahua_refresh_task = asyncio.ensure_future(_chahua_refresh_loop())
+
+
+def _chahua_stop_refresh_task():
+    global _chahua_refresh_task
+    task = _chahua_refresh_task
+    _chahua_refresh_task = None
+    if task and not task.done():
+        task.cancel()
+
+
+async def _chahua_fetch_list_pages() -> list:
+    """playwright 抓列表页 → [{url, title}]；playwright 不可用返回 []"""
+    try:
+        from playwright.async_api import async_playwright
+    except Exception as e:  # noqa: BLE001
+        log.warning("插画采集: playwright 未安装, 本轮跳过自动更新 (%s)", e)
+        return []
+    items = []
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+            ctx = await browser.new_context(user_agent=_CHAHUA_UA["User-Agent"], viewport={"width": 1280, "height": 900}, locale="zh-CN")
+            page = await ctx.new_page()
+            for pg in range(1, _CHAHUA_LIST_PAGES + 1):
+                try:
+                    await page.goto(f"{_CHAHUA_LIST_BASE}/{pg}", wait_until="domcontentloaded", timeout=25000)
+                    await page.wait_for_timeout(1000)
+                    cards = await page.eval_on_selector_all("img.cardImage", """els => els.map(e => {
+                        const a = e.closest('a');
+                        return {href: a ? a.getAttribute('href') : '', title: e.getAttribute('alt') || ''};
+                    })""")
+                    for c in cards:
+                        href = c["href"]
+                        if href:
+                            if not href.startswith("http"):
+                                href = "https://mikagogo.com" + href
+                            items.append({"url": href, "title": c["title"].strip()})
+                    log.info("插画采集 page/%d: %d 条", pg, len(cards))
+                except Exception as e:  # noqa: BLE001
+                    log.warning("插画采集 page/%d 失败: %s", pg, str(e)[:80])
+                await asyncio.sleep(1.2)
+            await browser.close()
+    except Exception as e:  # noqa: BLE001
+        log.warning("插画采集: 浏览器启动失败, 本轮跳过 (%s)", e)
+        return []
+    seen, uniq = set(), []
+    for it in items:
+        if it["url"] not in seen:
+            seen.add(it["url"])
+            uniq.append(it)
+    return uniq
+
+
+async def _chahua_fetch_detail_images(url: str) -> list:
+    """httpx 抓详情页, 返回全部正文大图 URL (去重保序, 排除缩略图)"""
+    try:
+        async with httpx.AsyncClient(headers=_CHAHUA_UA, follow_redirects=True, timeout=15) as c:
+            r = await c.get(url)
+            if r.status_code != 200:
+                return []
+            out = []
+            for u in _CHAHUA_DETAIL_IMG_RE.findall(r.text):
+                if not _CHAHUA_THUMB_RE.search(u) and "logo" not in u and u not in out:
+                    out.append(u)
+            return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
+async def _chahua_refresh_once():
+    """执行一轮采集并原子更新图库 JSON; 任何失败不影响现有图库"""
+    if _chahua_refresh_lock.locked():
+        return
+    async with _chahua_refresh_lock:
+        log.info("插画图库自动更新: 开始采集")
+        items = await _chahua_fetch_list_pages()
+        if not items:
+            log.warning("插画图库自动更新: 列表采集为空, 本轮跳过")
+            return
+        sem = asyncio.Semaphore(8)
+        cards = []
+
+        async def one(it):
+            async with sem:
+                imgs = await _chahua_fetch_detail_images(it["url"])
+                return [{"img": u, "title": it["title"], "post": it["url"]} for u in imgs]
+
+        results = await asyncio.gather(*(one(it) for it in items))
+        for rs in results:
+            cards.extend(rs)
+        seen, uniq = set(), []
+        for c in cards:
+            if c["img"] not in seen:
+                seen.add(c["img"])
+                uniq.append(c)
+        payload = {"site": "https://mikagogo.com/vip-illustration", "pages": _CHAHUA_LIST_PAGES,
+                   "count": len(uniq), "cards": uniq, "detail_only": True}
+        try:
+            os.makedirs(os.path.dirname(_CHAHUA_JSON), exist_ok=True)
+            tmp = _CHAHUA_JSON + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, _CHAHUA_JSON)  # 原子替换, 采集失败/中断不会损坏图库
+            log.info("插画图库自动更新完成: %d 张 (%d 个详情页)", len(uniq), len(items))
+        except Exception as e:  # noqa: BLE001
+            log.warning("插画图库写入失败: %s", e)
+
+
+async def _chahua_refresh_loop():
+    """后台定时循环: 每小时自动更新图库"""
+    try:
+        await asyncio.sleep(_CHAHUA_REFRESH_FIRST_DELAY)
+    except asyncio.CancelledError:
+        return
+    while True:
+        try:
+            await _chahua_refresh_once()
+        except asyncio.CancelledError:
+            return
+        except Exception as e:  # noqa: BLE001
+            log.warning("插画图库自动更新异常: %s", e)
+        try:
+            await asyncio.sleep(_CHAHUA_REFRESH_INTERVAL)
+        except asyncio.CancelledError:
+            return
