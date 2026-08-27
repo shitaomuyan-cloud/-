@@ -4292,10 +4292,20 @@ def _draw_title(draw, W, title, right, pad, ft, fm):
     gap = 6
     hh = gap * 2 + th
     draw.rectangle((0, 0, W, hh), fill=_WHITE)
-    draw.text((pad, gap), title, font=_font(ft), fill=_INK)
+    right_w = 0
     if right:
-        rw, rh = _tw(draw, right, _font(fm))
-        draw.text((W - pad - rw, gap + max((th - rh) // 2, 0)), right, font=_font(fm), fill=_MUTED)
+        right_w, rh = _tw(draw, right, _font(fm))
+    # 标题限宽, 防止与右侧状态文字重叠 (超出截断加省略号)
+    max_title_w = max(W - pad * 2 - right_w - 14, 60)
+    t = title or ' '
+    tw0 = _tw(draw, t, _font(ft))[0]
+    if tw0 > max_title_w:
+        while t and _tw(draw, t + '…', _font(ft))[0] > max_title_w:
+            t = t[:-1]
+        t = t + '…'
+    draw.text((pad, gap), t, font=_font(ft), fill=_INK)
+    if right:
+        draw.text((W - pad - right_w, gap + max((th - rh) // 2, 0)), right, font=_font(fm), fill=_MUTED)
     draw.line((0, hh - 1, W, hh - 1), fill=_LINE)
     return hh
 
@@ -4347,11 +4357,11 @@ def compose_detail(map_blob, view, note=''):
     draw = ImageDraw.Draw(canvas)
     y = _draw_title(draw, W, heading, right, pad, ft, fm)
     if mp:
-        y += 14  # 标题与官方图留间距, 避免与官方图自带标题重叠
+        y += 20  # 标题与官方图留足间距, 避免与官方图自带标题重叠
         canvas.paste(mp, ((W - mp.size[0]) // 2, y))
-        y += mh + 14  # 官方图与下方信息区留间距
+        y += mh + 20  # 官方图与下方信息区留足间距
     else:
-        y += 6
+        y += 10
     for i in range(0, len(shorts), 2):
         for col, (k, v) in enumerate(shorts[i:i + 2]):
             x0 = pad + col * (col_w + pad)
