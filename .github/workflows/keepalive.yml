@@ -1,7 +1,7 @@
 name: space-keepalive
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "0 * * * *"
   push:
     branches: [main]
   workflow_dispatch:
