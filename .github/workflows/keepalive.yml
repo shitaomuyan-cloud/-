@@ -1,0 +1,17 @@
+name: space-keepalive
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 访问空间公网地址(防休眠/唤醒)
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "https://ac10238b5a674cd83.app.workbuddy.link/" || echo "000")
+            echo "尝试 $i: HTTP $code"
+            [ "$code" = "200" ] && break
+            sleep 20
+          done
