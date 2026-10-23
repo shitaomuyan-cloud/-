@@ -26,7 +26,7 @@ __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询出图/二次元插画，含 Web 管理后台，积分按群独立",
-    "version": "2.4.5",
+    "version": "2.4.6",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -627,7 +627,7 @@ _MENU_INFO = {
     "红包列表": "📋 **红包列表**\n查看当前可抢的红包\n\n发送「红包列表」执行",
     "禁言": "🔇 **禁言**\n花积分禁言群成员，默认 1 分钟\n\n发送「禁言 @某人 [分钟]」执行",
     "撤回": "🗑️ **撤回**\n撤回机器人发过的消息（扣积分）\n\n先引用机器人消息，再发送「撤回」执行",
-    "生图": "🎨 **生图**\n花积分 AI 绘图，可选比例\n\n发送「生图 描述」执行\n例：生图 一只猫",
+    "生图": "🎨 **生图**\n花积分 AI 绘图，可选比例\n\n发送「生图 描述」执行\n例：生图 一只猫\n\n图生图：发送图片并输入「图生图 描述」",
     "插画": "🖼️ **插画**\n随机一张二次元插画，图库每小时自动更新\n\n发送「插画」或「插画 二次元随机」执行",
 }
 
@@ -665,19 +665,27 @@ _MENU_P1_BTNS = [
     ("签到", "签到"), ("抽奖", "抽奖"), ("我的", "我的"), ("积分排行", "积分排行"),
     ("抢劫", "抢劫 @某人"), ("同归于尽", "同归于尽 @某人"), ("购买反甲", "购买反甲 数量"), ("单身狗", "单身狗 @某人"),
     ("马内", "马内 @某人"), ("发红包", "发红包 积分 份 口令"), ("抢红包", "抢红包 口令"), ("红包列表", "红包列表"),
-    ("禁言", "禁言 @某人 分钟"), ("撤回", "撤回"), ("台风", "台风"), ("生图", "生图 描述"),
+    ("禁言", "禁言 @某人 分钟"), ("撤回", "撤回"), ("生图", "生图 描述"), ("图生图", "图生图 描述"),
 ]
 _MENU_P2_BTNS = [
     ("域名信息", "域名 baidu.com"), ("添加积分", "添加积分 @"), ("删除积分", "删除积分 @"), ("图床", "图床"),
-    ("插画", "插画"),
+    ("插画", "插画"), ("台风", "台风"),
 ]
 
 
+# QQ 内联键盘硬性上限: 最多 5 行, 每行最多 5 个按钮 (官方文档)。导航占 1 行, 故单页指令区最多 4 行。
+MENU_COLS = 4
+MENU_MAX_ROWS = 5
+
+
 def _menu_rows(btns, nav):
-    """构造按键行: 指令区(每行4个) + 底部导航行"""
-    rows = [[{"text": t, "data": d, "enter": True} for t, d in btns[i:i + 4]] for i in range(0, len(btns), 4)]
+    """构造按键行: 指令区(每行 MENU_COLS 个) + 底部导航行。
+    受 QQ 内联键盘 5 行上限约束 (导航占 1 行), 单页指令按钮勿超过 MENU_COLS*(MENU_MAX_ROWS-1)=16 个。"""
+    rows = [[{"text": t, "data": d, "enter": True} for t, d in btns[i:i + MENU_COLS]] for i in range(0, len(btns), MENU_COLS)]
     if nav:
         rows.append([{"text": t, "data": d, "reply": True} for t, d in nav])
+    if len(rows) > MENU_MAX_ROWS:
+        log.warning("娱乐菜单键盘行数 %d 超过 QQ 上限 %d, 请减少单页按钮或迁移到其它页", len(rows), MENU_MAX_ROWS)
     return rows
 
 
@@ -1070,6 +1078,56 @@ async def cmd_money(event, match):
         await _md(event, "💰 「我想要马内」配图已生成")
 
 
+@handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*图生图\s*(?P<rest>.*?)\s*$", name="图生图", desc="使用图片和描述生成新图", priority=61, block=True, ignore_at_check=True)
+@_gid_handler
+async def cmd_image_to_image(event, match):
+    """使用当前消息中的图片作为参考图进行编辑生成（支持多张参考图）。"""
+    prompt = (match.group("rest") or "").strip()
+    # 图片附件会被消息解析器追加为 <https://...>，不能把它当作提示词传给模型。
+    prompt = re.sub(r"<https?://[^>]+>", "", prompt).strip()
+    if not prompt:
+        return await _md(event, "🎨 请附上修改描述，并在同一条消息中发送图片（最多 10 张）\n例：图生图 换成赛博朋克风格")
+    # 收集所有图片附件（去重），支持多图输入
+    image_urls: list = []
+    seen = set()
+    direct = str(getattr(event, "image_url", "") or "").strip()
+    if direct.startswith(("http://", "https://")):
+        image_urls.append(direct)
+        seen.add(direct)
+    attachments = getattr(event, "attachments", None) or []
+    for item in attachments:
+        if not isinstance(item, dict):
+            continue
+        if not str(item.get("content_type", "")).startswith("image/"):
+            continue
+        url = str(item.get("url") or "").strip()
+        if url.startswith(("http://", "https://")) and url not in seen:
+            image_urls.append(url)
+            seen.add(url)
+    if not image_urls:
+        return await _md(event, "🖼️ 请在消息中附带至少一张图片，再使用：图生图 描述")
+    if len(image_urls) > 10:
+        image_urls = image_urls[:10]
+        await _md(event, "⚠️ 图生图最多支持 10 张参考图，已截取前 10 张")
+    cfg = entconfig.get_current()
+    draw_cost = int(cfg.get("draw_cost", 50))
+    api_base = (cfg.get("draw_api_base") or "").strip()
+    api_key = (cfg.get("draw_api_key") or "").strip()
+    if not api_base or not api_key:
+        return await _md(event, "⚠️ 图生图需要先在娱乐助手的「生图配置」中配置 OpenAI 兼容接口和密钥")
+    size = "1024x1024"
+    if not games.charge(_uid(event), draw_cost):
+        return await _md(event, f"⚠️ 积分不足\n图生图需要 {_c(draw_cost)} 积分")
+    gid = str(getattr(event, "group_id", "") or "")
+    if not _draw_acquire(gid):
+        games.refund(_uid(event), draw_cost)
+        return await _md(event, "⚠️ 该群已有生图任务进行中\n请等待完成后再试")
+    try:
+        return await _draw_openai_edit(event, prompt, draw_cost, cfg, api_base, api_key, image_urls, size)
+    finally:
+        _draw_release(gid)
+
+
 @handler(r"^\s*(?:<@[^>]*>\s*|@[\u4e00-\u9fa5\w]*\s*)*生图\s*(?P<rest>.+?)\s*$", name="生图", desc="扣积分 AI绘图 (可点按钮选比例)", priority=60, block=True, ignore_at_check=True)
 @_gid_handler
 async def cmd_draw(event, match):
@@ -1205,6 +1263,66 @@ async def _draw_legacy(event, prompt, draw_cost, size=""):
         await _post_draw_done(event, prompt, draw_cost, size or "1024x1024", img_bytes, fallback_url=url)
     except Exception:
         await _md(event, _prefix_at(event) + f"🎨 「{_first_line(prompt, 8)}」\n{url}")
+
+
+async def _draw_openai_edit(event, prompt, draw_cost, cfg, api_base, api_key, image_urls, size="1024x1024"):
+    """调用 OpenAI 兼容 images/edits 接口完成图生图（支持多张参考图）。
+
+    image_urls: 参考图 URL 列表。标准 OpenAI images/edits 接口的 image 参数
+    本身接受文件数组（最多 16 张），但部分第三方 OpenAI 兼容生图接口只支持
+    单图，这种情况下多图会被服务端拒绝，错误会触发积分退还。
+    """
+    model = (cfg.get("draw_model") or "").strip() or "gpt-image-2"
+    proxy = (cfg.get("draw_proxy") or "").strip()
+    await _md(event, f"🎨 正在修改图片「{_first_line(prompt, 8)}」…（参考图 {len(image_urls)} 张）")
+    try:
+        kwargs = {"proxy": proxy} if proxy else {}
+        async with httpx.AsyncClient(timeout=120, **kwargs) as client:
+            image_files = []
+            for idx, url in enumerate(image_urls):
+                image_resp = await client.get(url)
+                image_resp.raise_for_status()
+                image_data = image_resp.content
+                if not image_data:
+                    raise ValueError(f"参考图 {idx + 1} 为空")
+                image_files.append(("image", (f"reference{idx}.png", image_data, "image/png")))
+            response = await client.post(
+                f"{api_base.rstrip('/')}/images/edits",
+                headers={"Authorization": f"Bearer {api_key}"},
+                data={"model": model, "prompt": prompt, "n": "1", "size": size},
+                files=image_files,
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as error:
+        games.refund(_uid(event), draw_cost)
+        return await _md(event, f"⚠️ 图生图服务异常：{error}（积分已退还）")
+    items = (payload.get("data") or []) if isinstance(payload, dict) else []
+    if not items:
+        games.refund(_uid(event), draw_cost)
+        return await _md(event, "⚠️ 图生图失败，积分已退还")
+    item = items[0] if isinstance(items[0], dict) else {}
+    image_url_out = str(item.get("url") or "")
+    encoded = str(item.get("b64_json") or "")
+    if encoded:
+        try:
+            import base64 as _b64
+            await _post_draw_done(event, prompt, draw_cost, size, _b64.b64decode(encoded), fallback_url=image_url_out)
+            return
+        except Exception:
+            pass
+    if image_url_out.startswith(("http://", "https://")):
+        try:
+            async with httpx.AsyncClient(timeout=30, **kwargs) as client:
+                result = await client.get(image_url_out)
+                result.raise_for_status()
+                await _post_draw_done(event, prompt, draw_cost, size, result.content, fallback_url=image_url_out)
+            return
+        except Exception:
+            await _md(event, _prefix_at(event) + f"🎨 图生图完成\n{image_url_out}")
+            return
+    games.refund(_uid(event), draw_cost)
+    await _md(event, "⚠️ 图生图失败，积分已退还")
 
 
 async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size="1024x1024"):
