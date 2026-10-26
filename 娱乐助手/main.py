@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import tempfile
 from pathlib import Path
 import threading
@@ -26,7 +27,7 @@ __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询出图/二次元插画，含 Web 管理后台，积分按群独立",
-    "version": "2.4.7",
+    "version": "2.4.8",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -599,6 +600,7 @@ async def _init():
     with contextlib.suppress(Exception):
         webpanel.register_routes()
     # 插画图库定时自动更新 (内置; playwright 缺失时自动跳过)
+    _chahua_ensure_browser()  # 确保 Chromium 内核已就绪 (缺失则后台自动下载)
     _chahua_start_refresh_task()
 
 
@@ -3592,57 +3594,55 @@ async def cmd_illustration(event, match):
         await event.reply("⚠️ 图片正在检测中，请稍等…")
     except Exception:  # noqa: BLE001
         pass
-    # 最多 3 轮: 违规后自动换图重试
-    for attempt in range(3):
+    # 多轮重试: 任何发送失败(网络/上传/被平台拦截/内容违规)都自动换下一张继续, 不卡停
+    MAX_TRY = 8
+    last_violation = False
+    for attempt in range(MAX_TRY):
         jpeg, title, url = await _chahua_pick()
         if not jpeg:
             if attempt == 0:
                 return await event.reply("❌ 暂时没找到合适的图，再试一次吧")
-            break
+            break  # 后续轮无可用图, 走结尾统一提示
         short = _chahua_truncate_title(title, 30)
+        # 重置标记, 避免上一轮残留导致误判
+        with contextlib.suppress(Exception):
+            event.error = None
+        out_token = _chahua_send_outcome.set("")
+        url_token = _chahua_send_url.set(url)
+        sent_ok = False
         try:
-            # 重置错误标记 + 违规标记, 避免上一轮残留导致误判
-            with contextlib.suppress(Exception):
-                event.error = None
-            out_token = _chahua_send_outcome.set("")
-            # 标记当前发送的图 URL (send_failed 钩子据此识别插画违规)
-            token = _chahua_send_url.set(url)
-            try:
-                img_url = await _chahua_upload(jpeg)
-                if img_url:
-                    await event.reply_image(img_url, content=short)
-                else:
-                    await event.reply_image(jpeg, content=short)
-            finally:
-                _chahua_send_url.reset(token)
-                _chahua_send_outcome.reset(out_token)
+            img_url = await _chahua_upload(jpeg)
+            if img_url:
+                await event.reply_image(img_url, content=short)
+            else:
+                await event.reply_image(jpeg, content=short)
+            sent_ok = True
         except Exception as e:  # noqa: BLE001
-            log.warning("插画发图失败: %s", e)
-            return await event.reply("❌ 图片发送失败，再试一次吧")
-        # 检查发送是否违规被拦截 (双保险: send_failed 钩子标记 + event.error 字段)
-        outcome = _chahua_send_outcome.get()
+            log.warning("插画发图异常(第%d轮): %s", attempt + 1, e)
+            sent_ok = False
+        finally:
+            _chahua_send_url.reset(url_token)
+            outcome = _chahua_send_outcome.get()
+            _chahua_send_outcome.reset(out_token)
+        # 双保险判定: 发送失败 / 内容违规被平台拦截
         err = getattr(event, "error", None)
         err_code = err.get("code") if isinstance(err, dict) else None
         err_nested = (err.get("data") or {}).get("err_code") if isinstance(err, dict) else None
-        is_violation = (
-            outcome == "violation"
-            or err_code == 40034006
-            or err_nested == 40034006
-        )
-        if is_violation:
-            log.info("插画违规已换图重试 (第 %d 轮)", attempt + 1)
-            continue
-        if isinstance(err, dict) and err:
-            # 非违规发送失败 → 明确提示, 不静默
-            log.warning("插画发送失败: %s", err)
-            return await event.reply("❌ 图片发送失败，再试一次吧")
-        return None
-    return await event.reply("🛡️ 图片内容被平台拦截，已自动换图仍失败，请稍后再试")
+        is_violation = outcome == "violation" or err_code == 40034006 or err_nested == 40034006
+        if sent_ok and not is_violation:
+            return None  # 发送成功, 结束
+        # 失败/被拦截 → 自动换下一张继续发送 (不再因单次失败而停住)
+        last_violation = is_violation
+        log.info("插画%s(第%d轮), 自动换图重试", "被平台拦截" if is_violation else "发送失败", attempt + 1)
+    if last_violation:
+        return await event.reply("🛡️ 图片内容多次被平台拦截，已自动换图仍失败，请稍后再试")
+    return await event.reply("❌ 图片发送失败，已尝试多张仍发不出，请稍后再试")
 
 
 # ============ 插画图库自动采集与定时更新 (内置, 免外部脚本) ============
 # 别人安装后无需任何外部脚本: 插件每小时自动采集 mikagogo 更新图库。
-# playwright 为可选依赖: 未安装时自动跳过更新, 图库保持已有数据, 不影响发图。
+# playwright 已写入 requirements.txt, 框架会在加载时自动 pip 安装; Chromium 内核由
+# _chahua_ensure_browser() 在加载时后台自动下载。两者均未就绪时本轮跳过, 不影响发图。
 _chahua_refresh_task = None
 _chahua_refresh_lock = asyncio.Lock()
 _CHAHUA_REFRESH_INTERVAL = 3600         # 更新周期: 每小时
@@ -3668,6 +3668,85 @@ def _chahua_stop_refresh_task():
     _chahua_refresh_task = None
     if task and not task.done():
         task.cancel()
+
+
+# ---------- 插画定时采集依赖自检: 自动安装 playwright + Chromium ----------
+# 框架会在插件加载时按 requirements.txt 自动 pip 安装依赖; 但 playwright 的
+# Chromium 浏览器内核需额外下载。此处做 best-effort 后台下载, 不阻塞插件加载。
+_chahua_browser_task = None
+
+
+def _playwright_chromium_installed():
+    """探测当前 playwright 版本所需的 Chromium 内核是否已下载 (权威: 直接问 playwright 内核路径)。"""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return False
+    try:
+        with sync_playwright() as p:
+            exe = p.chromium.executable_path
+            if exe and os.path.isfile(exe):
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    # 兜底: 任意 chromium 安装标记/可执行文件存在 (跨版本)
+    cache = os.path.expanduser("~/.cache/ms-playwright")
+    if not os.path.isdir(cache):
+        return False
+    for d in os.listdir(cache):
+        if not d.startswith("chromium"):
+            continue
+        base = os.path.join(cache, d)
+        if os.path.isfile(os.path.join(base, "INSTALLATION_COMPLETE")):
+            return True
+        for _root, _dirs, files in os.walk(base):
+            if "chrome" in files and os.access(os.path.join(_root, "chrome"), os.X_OK):
+                return True
+    return False
+
+
+async def _chahua_download_chromium():
+    """后台下载 Chromium 内核 (best-effort, 不阻塞加载)。"""
+    # 清理可能残留的孤儿锁 (空目录且无活动安装进程时, 否则 playwright 会拒绝安装)
+    _dirlock = os.path.expanduser("~/.cache/ms-playwright/__dirlock")
+    with contextlib.suppress(Exception):
+        if os.path.isdir(_dirlock) and not os.listdir(_dirlock):
+            os.rmdir(_dirlock)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "playwright", "install", "chromium",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("插画采集: 启动 Chromium 下载失败: %s", e)
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=900)
+    except asyncio.TimeoutError:
+        with contextlib.suppress(Exception):
+            proc.kill()
+        log.warning("插画采集: Chromium 下载超时(>15min), 定时采集暂不可用")
+        return
+    if proc.returncode == 0:
+        log.info("插画采集: Chromium 已就绪, 定时采集可用")
+    else:
+        log.warning("插画采集: Chromium 下载失败(可能缺少系统库), 定时采集将暂不可用")
+
+
+def _chahua_ensure_browser():
+    """插件加载时调用: 确保 Chromium 内核存在, 缺失则后台自动下载。"""
+    global _chahua_browser_task
+    if _playwright_chromium_installed():
+        return
+    try:
+        import playwright  # noqa: F401  # 包未装则跳过 (框架应已按 requirements 自动安装)
+    except ImportError:
+        log.warning("插画采集: playwright 未安装, 跳过 Chromium 初始化")
+        return
+    if _chahua_browser_task is not None and not _chahua_browser_task.done():
+        return  # 已在下载
+    log.info("插画采集: 未检测到 Chromium, 后台自动下载内核 (约数十~数百 MB)...")
+    _chahua_browser_task = asyncio.ensure_future(_chahua_download_chromium())
 
 
 async def _chahua_fetch_list_pages() -> list:
@@ -3760,6 +3839,21 @@ async def _chahua_refresh_once():
                     uniq.append(c)
             payload = {"site": "https://mikagogo.com/vip-illustration", "pages": _CHAHUA_LIST_PAGES,
                        "count": len(uniq), "cards": uniq, "detail_only": True}
+            # 图库保护: 采集结果为空或远少于现有图库时保留旧图库, 避免误清空导致"发不出图"
+            old_count = 0
+            try:
+                with open(_CHAHUA_JSON, encoding="utf-8") as _f:
+                    old_count = len(json.load(_f).get("cards", []))
+            except Exception:  # noqa: BLE001
+                old_count = 0
+            if not uniq:
+                _chahua_stats["refresh_result"] = f"采集列表为空, 保留旧图库({old_count}张)"
+                log.warning("插画图库自动更新: 本轮回空, 保留旧图库 %d 张", old_count)
+                return
+            if old_count and len(uniq) < old_count * 0.5:
+                _chahua_stats["refresh_result"] = f"采集仅{len(uniq)}张(旧库{old_count}张), 保留旧图库"
+                log.warning("插画图库自动更新: 采集%d张少于旧库%d一半, 保留旧图库", len(uniq), old_count)
+                return
             try:
                 os.makedirs(os.path.dirname(_CHAHUA_JSON), exist_ok=True)
                 tmp = _CHAHUA_JSON + ".tmp"
