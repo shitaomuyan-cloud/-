@@ -26,14 +26,14 @@ __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询出图/二次元插画，含 Web 管理后台，积分按群独立",
-    "version": "2.4.6",
+    "version": "2.4.7",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 _PANEL_HTML = os.path.join(_PLUGIN_DIR, "web", "panel.html")
 _PAGE_KEY = "entertainment"
-_DRAW_API = "http://api.qwq.nki.pw/API/AI/BaiDuDraw.php"
+_DRAW_API = "https://image.pollinations.ai/prompt/"
 _DOG_API = "https://gulangsc.cn/API/zt/dsg.php"
 _MONEY_API = "https://gulangsc.cn/API/zt/yao.php"
 _DOG_KEY = "lNHw9dR"
@@ -1222,33 +1222,27 @@ async def _post_draw_done(event, prompt, draw_cost, size, img_bytes, fallback_ur
 
 
 async def _draw_legacy(event, prompt, draw_cost, size=""):
-    """内置绘图接口 (百度绘图, 兼容旧行为)。"""
+    """内置绘图接口 (Pollinations, 免费免key, 直接返回图片)。"""
     await _md(event, f"🎨 正在生成「{_first_line(prompt, 8)}」…")
     try:
-        params = {"keyword": prompt}
-        if size:
-            params["size"] = size
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.get(_DRAW_API, params=params)
+        width, height = 1024, 1024
+        if size and "x" in size:
             try:
-                data = resp.json()
+                width, height = (int(v) for v in size.lower().split("x", 1))
             except Exception:
-                try:
-                    data = json.loads(resp.text)
-                except Exception:
-                    data = resp.text
+                pass
+        from urllib.parse import quote as _urlquote
+        url = f"{_DRAW_API}{_urlquote(prompt)}?width={width}&height={height}&nologo=true&seed={int(time.time())}"
+        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+            resp = await client.get(url)
+        img_bytes = resp.content if resp.status_code == 200 else b""
+        if not img_bytes or img_bytes[:2] not in (b"\xff\xd8", b"\x89P"):
+            # 不是图片内容 → 失败
+            img_bytes = b""
     except Exception as e:
         games.refund(_uid(event), draw_cost)
         return await _md(event, f"⚠️ 生图服务异常：{e}（积分已退还）")
-    url = ""
-    if isinstance(data, dict):
-        raw = data.get("url") or data.get("image") or data.get("img") or data.get("data") or ""
-        url = raw[0] if isinstance(raw, list) and raw else str(raw).strip()
-    elif isinstance(data, list):
-        url = data[0] if data else ""
-    elif isinstance(data, str):
-        url = data.strip()
-    if not url.startswith("http"):
+    if not img_bytes:
         games.refund(_uid(event), draw_cost)
         return await _md(event, "⚠️ 生图失败，积分已退还")
     title = f"生成完成「{_first_line(prompt, 8)}」"
@@ -1258,11 +1252,9 @@ async def _draw_legacy(event, prompt, draw_cost, size=""):
     info_lines.append(f"消耗：{draw_cost} 积分")
     text = f"🎨 {title}\n" + "\n".join(info_lines)
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            img_bytes = (await client.get(url)).content
-        await _post_draw_done(event, prompt, draw_cost, size or "1024x1024", img_bytes, fallback_url=url)
+        await _post_draw_done(event, prompt, draw_cost, size or "1024x1024", img_bytes, fallback_url="")
     except Exception:
-        await _md(event, _prefix_at(event) + f"🎨 「{_first_line(prompt, 8)}」\n{url}")
+        await _md(event, _prefix_at(event) + f"🎨 「{_first_line(prompt, 8)}」\n(图片发送失败，请重试)")
 
 
 async def _draw_openai_edit(event, prompt, draw_cost, cfg, api_base, api_key, image_urls, size="1024x1024"):
@@ -3028,7 +3020,7 @@ async def catch_pending_media(event):
 from core.network.http_compat import AsyncHttpClient
 from core.plugin.decorators import handler, on_unload
 
-_API = "http://api.qwq.nki.pw/API/Tools/Web/Whois.php"
+_API = "https://rdap.org/domain/"
 _BTN = [[{"text": "再查一个", "data": "域名", "enter": False, "style": 1}]]
 
 # 提取纯域名（去掉 http:// https:// / 路径等）
@@ -3090,13 +3082,79 @@ async def query_whois(event, match):
 
     try:
         c = await _whois_http()
-        resp = await c.get(f"{_API}?domain={urllib.parse.quote(domain)}")
-        result = resp.json()
+        resp = await c.get(f"{_API}{urllib.parse.quote(domain)}", follow_redirects=True)
+        raw = resp.json()
     except Exception:
         return await event.reply(
             f"<@{uid}>⚠️ 请求超时，请稍后重试",
             buttons=_BTN,
         )
+
+    # RDAP (免key官方标准接口) → 映射为原中文卡片格式
+    if not isinstance(raw, dict) or not raw.get("ldhName"):
+        return await event.reply(
+            f"<@{uid}>❌ 查询失败：未找到该域名的注册信息",
+            buttons=_BTN,
+        )
+    registrar = ""
+    for ent in raw.get("entities", []):
+        if "registrar" in ent.get("roles", []):
+            try:
+                for item in ent.get("vcardArray", [])[1]:
+                    if item[0] == "fn":
+                        registrar = str(item[3] or "")
+                        break
+            except Exception:
+                pass
+            if registrar:
+                break
+    events = {e.get("eventAction"): e.get("eventDate", "") for e in raw.get("events", [])}
+    def _fmt_dt(s):
+        s = str(s or "")
+        try:
+            return s[:19].replace("T", " ") or "?"
+        except Exception:
+            return s or "?"
+    reg_time = _fmt_dt(events.get("registration"))
+    exp_time = _fmt_dt(events.get("expiration"))
+    now = time.time()
+    try:
+        reg_days = max(0, int((now - time.mktime(time.strptime(reg_time, "%Y-%m-%d %H:%M:%S"))) / 86400)) if reg_time != "?" else "?"
+    except Exception:
+        reg_days = "?"
+    try:
+        left_days = max(0, int((time.mktime(time.strptime(exp_time, "%Y-%m-%d %H:%M:%S")) - now) / 86400)) if exp_time != "?" else "?"
+    except Exception:
+        left_days = "?"
+    expired = "已过期" if (isinstance(left_days, int) and left_days <= 0) else "未过期"
+    # EPP 状态码 → 中文短标签
+    _EPP_CN = {
+        "ok": "正常", "active": "正常",
+        "client hold": "clientHold", "server hold": "serverHold",
+        "client transfer prohibited": "禁止转移",
+        "client update prohibited": "禁止修改",
+        "client delete prohibited": "禁止删除",
+        "server transfer prohibited": "禁止转移",
+        "server update prohibited": "禁止修改",
+        "server delete prohibited": "禁止删除",
+        "redemption period": "赎回期", "pending delete": "待删除",
+    }
+    status_cn = [_EPP_CN.get(str(s).lower(), s) for s in raw.get("status", [])]
+    result = {
+        "code": 200,
+        "msg": "",
+        "data": {
+            "域名": raw.get("ldhName", domain),
+            "注册商": registrar or "未知",
+            "注册时间": reg_time,
+            "到期时间": exp_time,
+            "已注册天数": reg_days,
+            "剩余天数": left_days,
+            "是否过期": expired,
+            "DNS服务器": [n.get("ldhName", "") for n in raw.get("nameservers", []) if n.get("ldhName")],
+            "域名状态": status_cn,
+        },
+    }
 
     code = result.get("code") if isinstance(result, dict) else None
     msg = result.get("msg", "") if isinstance(result, dict) else ""
