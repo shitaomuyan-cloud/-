@@ -27,7 +27,7 @@ __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询出图/二次元插画，含 Web 管理后台，积分按群独立",
-    "version": "2.4.9",
+    "version": "2.4.10",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -1259,64 +1259,168 @@ async def _draw_legacy(event, prompt, draw_cost, size=""):
         await _md(event, _prefix_at(event) + f"🎨 「{_first_line(prompt, 8)}」\n(图片发送失败，请重试)")
 
 
+def _img_fmt(data: bytes):
+    """按文件头 magic bytes 判断真实图片格式，返回 (ext, mime)。
+    原代码一律按 PNG 上传，遇到 JPEG/WebP 会被严格接口以 400 拒绝。"""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png", "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpg", "image/jpeg"
+    if data[:4] == b"GIF8":
+        return "gif", "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp", "image/webp"
+    return "png", "image/png"
+
+
+def _stitch_images(datas, max_side: int = 768):
+    """把多张参考图缩放后拼成一张网格图（单图则原样返回 PNG 字节）。
+    用于兼容只接受单张 image 的第三方生图接口，从而真正支持『多图识别/参考』。"""
+    import math
+    imgs = []
+    for d in datas:
+        try:
+            im = Image.open(io.BytesIO(d)).convert("RGB")
+            w, h = im.size
+            if max(w, h) > max_side:
+                s = max_side / max(w, h)
+                im = im.resize((max(1, int(w * s)), max(1, int(h * s))))
+            imgs.append(im)
+        except Exception:
+            pass
+    if not imgs:
+        return None
+    if len(imgs) == 1:
+        buf = io.BytesIO()
+        imgs[0].save(buf, "PNG")
+        return buf.getvalue()
+    n = len(imgs)
+    cols = math.ceil(math.sqrt(n))
+    rows = (n + cols - 1) // cols
+    cw = max(i.width for i in imgs)
+    ch = max(i.height for i in imgs)
+    canvas = Image.new("RGB", (cw * cols, ch * rows), (255, 255, 255))
+    for i, im in enumerate(imgs):
+        r, c = divmod(i, cols)
+        canvas.paste(im, (c * cw, r * ch))
+    buf = io.BytesIO()
+    canvas.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _api_err_text(exc):
+    """把接口异常转成可读文字，优先展示服务端返回的真实错误信息（而非笼统 400）。"""
+    if isinstance(exc, httpx.HTTPStatusError):
+        resp = exc.response
+        try:
+            j = resp.json()
+            e = j.get("error") if isinstance(j, dict) else None
+            if isinstance(e, dict):
+                e = e.get("message") or e.get("type") or str(e)
+            if e:
+                return f"{resp.status_code} {e}"
+        except Exception:
+            pass
+        txt = (getattr(resp, "text", "") or "")[:400]
+        return f"{resp.status_code} {txt}" if txt else str(exc)
+    return str(exc)
+
+
 async def _draw_openai_edit(event, prompt, draw_cost, cfg, api_base, api_key, image_urls, size="1024x1024"):
     """调用 OpenAI 兼容 images/edits 接口完成图生图（支持多张参考图）。
 
-    image_urls: 参考图 URL 列表。标准 OpenAI images/edits 接口的 image 参数
-    本身接受文件数组（最多 16 张），但部分第三方 OpenAI 兼容生图接口只支持
-    单图，这种情况下多图会被服务端拒绝，错误会触发积分退还。
+    - 多张参考图优先用标准『多 image 字段』方式提交（GPT-Image 系列原生支持）。
+    - 若接口仅支持单图（返回 400 等被拒），自动把多张图拼成一张网格图提交，
+      从而真正支持『多图识别/参考』。
+    - 上传时严格按图片真实格式设置 MIME，避免『声明 PNG 实际 JPEG』导致的 400。
     """
     model = (cfg.get("draw_model") or "").strip() or "gpt-image-2"
     proxy = (cfg.get("draw_proxy") or "").strip()
     await _md(event, f"🎨 正在修改图片「{_first_line(prompt, 8)}」…（参考图 {len(image_urls)} 张）")
     try:
         kwargs = {"proxy": proxy} if proxy else {}
+        # 1) 下载所有参考图，记录真实格式
         async with httpx.AsyncClient(timeout=120, **kwargs) as client:
-            image_files = []
+            prepared = []
             for idx, url in enumerate(image_urls):
-                image_resp = await client.get(url)
-                image_resp.raise_for_status()
-                image_data = image_resp.content
-                if not image_data:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.content
+                if not data:
                     raise ValueError(f"参考图 {idx + 1} 为空")
-                image_files.append(("image", (f"reference{idx}.png", image_data, "image/png")))
-            response = await client.post(
-                f"{api_base.rstrip('/')}/images/edits",
-                headers={"Authorization": f"Bearer {api_key}"},
-                data={"model": model, "prompt": prompt, "n": "1", "size": size},
-                files=image_files,
-            )
-            response.raise_for_status()
-            payload = response.json()
+                ext, mime = _img_fmt(data)
+                prepared.append((data, ext, mime))
+            # 2) 提交策略：多图先试标准多字段，失败降级为拼接单图
+            if len(prepared) == 1:
+                attempts = [("single", prepared)]
+            else:
+                attempts = [("multi", prepared), ("stitch", prepared)]
+            last_err = None
+            for mode, payload in attempts:
+                try:
+                    if mode == "multi":
+                        files = [("image", (f"ref{i}.{ext}", d, mime))
+                                 for i, (d, ext, mime) in enumerate(payload)]
+                        p = prompt
+                    elif mode == "stitch":
+                        stitched = _stitch_images([d for d, _, _ in payload])
+                        if not stitched:
+                            continue
+                        files = [("image", ("stitched.png", stitched, "image/png"))]
+                        p = f"{prompt}（下方拼接图已包含多张参考图，请综合所有参考图处理）"
+                    else:  # single
+                        d, ext, mime = payload[0]
+                        files = [("image", (f"ref0.{ext}", d, mime))]
+                        p = prompt
+                    response = await client.post(
+                        f"{api_base.rstrip('/')}/images/edits",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        data={"model": model, "prompt": p, "n": "1", "size": size},
+                        files=files,
+                    )
+                    response.raise_for_status()
+                    result_payload = response.json()
+                    # 3) 处理结果（成功即返回）
+                    items = (result_payload.get("data") or []) if isinstance(result_payload, dict) else []
+                    if not items:
+                        last_err = ValueError("接口未返回图片数据")
+                        if mode == "stitch":
+                            break
+                        continue
+                    item = items[0] if isinstance(items[0], dict) else {}
+                    out_url = str(item.get("url") or "")
+                    encoded = str(item.get("b64_json") or "")
+                    if encoded:
+                        try:
+                            import base64 as _b64
+                            await _post_draw_done(event, prompt, draw_cost, size, _b64.b64decode(encoded), fallback_url=out_url)
+                            return
+                        except Exception:
+                            pass
+                    if out_url.startswith(("http://", "https://")):
+                        try:
+                            async with httpx.AsyncClient(timeout=30, **kwargs) as dl:
+                                rb = await dl.get(out_url)
+                                rb.raise_for_status()
+                                await _post_draw_done(event, prompt, draw_cost, size, rb.content, fallback_url=out_url)
+                            return
+                        except Exception:
+                            await _md(event, _prefix_at(event) + f"🎨 图生图完成\n{out_url}")
+                            return
+                    last_err = ValueError("接口未返回可用图片地址")
+                    if mode == "stitch":
+                        break
+                    continue
+                except Exception as e:
+                    last_err = e
+                    if mode == "stitch":
+                        break
+                    continue
     except Exception as error:
         games.refund(_uid(event), draw_cost)
-        return await _md(event, f"⚠️ 图生图服务异常：{error}（积分已退还）")
-    items = (payload.get("data") or []) if isinstance(payload, dict) else []
-    if not items:
-        games.refund(_uid(event), draw_cost)
-        return await _md(event, "⚠️ 图生图失败，积分已退还")
-    item = items[0] if isinstance(items[0], dict) else {}
-    image_url_out = str(item.get("url") or "")
-    encoded = str(item.get("b64_json") or "")
-    if encoded:
-        try:
-            import base64 as _b64
-            await _post_draw_done(event, prompt, draw_cost, size, _b64.b64decode(encoded), fallback_url=image_url_out)
-            return
-        except Exception:
-            pass
-    if image_url_out.startswith(("http://", "https://")):
-        try:
-            async with httpx.AsyncClient(timeout=30, **kwargs) as client:
-                result = await client.get(image_url_out)
-                result.raise_for_status()
-                await _post_draw_done(event, prompt, draw_cost, size, result.content, fallback_url=image_url_out)
-            return
-        except Exception:
-            await _md(event, _prefix_at(event) + f"🎨 图生图完成\n{image_url_out}")
-            return
+        return await _md(event, f"⚠️ 图生图服务异常：{_api_err_text(error)}（积分已退还）")
     games.refund(_uid(event), draw_cost)
-    await _md(event, "⚠️ 图生图失败，积分已退还")
+    return await _md(event, f"⚠️ 图生图失败：{_api_err_text(last_err) if last_err else '未知错误'}（积分已退还）")
 
 
 async def _draw_openai(event, prompt, draw_cost, cfg, api_base, api_key, size="1024x1024"):
