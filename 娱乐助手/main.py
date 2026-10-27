@@ -27,7 +27,7 @@ __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询出图/二次元插画，含 Web 管理后台，积分按群独立",
-    "version": "2.4.11",
+    "version": "2.4.12",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -1808,6 +1808,8 @@ def create_redpack(sender_id, total_points: int, count: int, password: str = "")
         remain -= amt
         remain_cnt -= 1
     random.shuffle(amounts)
+    max_amt = max(amounts)
+    min_amt = min(amounts)
 
     pack_id = password
     save(pack_id, {
@@ -1816,6 +1818,8 @@ def create_redpack(sender_id, total_points: int, count: int, password: str = "")
         "count": count,
         "amounts": amounts,
         "claimed": {},
+        "max_amt": max_amt,
+        "min_amt": min_amt,
         "created_at": datetime.now().isoformat(),
         "expires_at": time.time() + REDPACK_TTL,
     })
@@ -1861,7 +1865,10 @@ def claim_redpack(user_id, pack_id: str):
     data["amounts"] = amounts
     save(pack_id, data)
     points.add_points(user_id, amount)
-    return True, amount, f"抢到 {amount} 积分", len(amounts)
+    # 手气最佳: 抢到全局最大包, 且仅当存在金额差异时才标记 (与 QQ 拼手气一致)
+    best = amount == data.get("max_amt", 0) > 0 and amount > data.get("min_amt", 0)
+    suffix = " 🎉手气最佳" if best else ""
+    return True, amount, f"抢到 {amount} 积分{suffix}", len(amounts)
 
 
 def claim_any_redpack(user_id):
