@@ -27,7 +27,7 @@ __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询出图/二次元插画，含 Web 管理后台，积分按群独立",
-    "version": "2.4.10",
+    "version": "2.4.11",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -1787,19 +1787,26 @@ def create_redpack(sender_id, total_points: int, count: int, password: str = "")
         return False, "积分不足", None
     charge(sender_id, total_points)
 
-    # 拼手气随机分配
+    # 拼手气随机分配 (二倍均值法, 与 QQ 拼手气红包一致)
+    # 每次可抢上限 = 2 * 剩余金额 / 剩余份数, 下限固定 1 积分。
+    # 期望每份 ≈ 总额/份数, 先抢后抢公平——不再出现「前面抢得极少、最后一坨」的观感。
+    MIN_AMT = 1
     amounts = []
     remain = total_points
     remain_cnt = count
     for _ in range(count):
         if remain_cnt == 1:
-            amounts.append(remain)
+            amt = remain
         else:
-            # 保证剩余每份至少 1: 当前份在 [1, remain-(remain_cnt-1)] 区间随机
-            amt = random.randint(1, max(1, remain - remain_cnt + 1))
-            amounts.append(amt)
-            remain -= amt
-            remain_cnt -= 1
+            # 二倍均值上限, 再夹紧以保证后续每份至少 MIN_AMT
+            hi = (2 * remain) // remain_cnt
+            hi = min(hi, remain - (remain_cnt - 1) * MIN_AMT)
+            if hi < MIN_AMT:
+                hi = MIN_AMT
+            amt = random.randint(MIN_AMT, hi)
+        amounts.append(amt)
+        remain -= amt
+        remain_cnt -= 1
     random.shuffle(amounts)
 
     pack_id = password
