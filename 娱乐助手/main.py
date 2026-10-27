@@ -27,7 +27,7 @@ __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询出图/二次元插画，含 Web 管理后台，积分按群独立",
-    "version": "2.4.13",
+    "version": "2.4.14",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -603,6 +603,9 @@ async def _init():
     # 插画图库定时自动更新 (内置; playwright 缺失时自动跳过)
     _chahua_ensure_browser()  # 确保 Chromium 内核已就绪 (缺失则后台自动下载)
     _chahua_start_refresh_task()
+    # 启动即清理各群已过期红包: 释放被占用的口令并补退积分
+    with contextlib.suppress(Exception):
+        _rp_cleanup_expired()
 
 
 @on_unload
@@ -1832,14 +1835,13 @@ def _is_expired(data) -> bool:
 
 
 def _expire_refund(pack_id, data, gid=None) -> int:
-    """红包超时未领完: 将剩余积分退回发送者, 返回退还数量。"""
+    """红包超时未领完: 将剩余积分退回发送者, 并删除红包记录释放口令。返回退还数量。"""
     amounts = data.get("amounts") or []
     unclaimed = sum(amounts)
-    data["amounts"] = []
-
-    save(pack_id, data, gid or _rp_gid())
     if unclaimed > 0:
         points.add_points(data.get("sender_id"), unclaimed)
+    # 退款后立即删除过期红包记录, 释放口令, 避免过期红包永久占用口令
+    delete(pack_id, gid or _rp_gid())
     return unclaimed
 
 
@@ -1869,6 +1871,9 @@ def claim_redpack(user_id, pack_id: str):
     # 手气最佳: 抢到全局最大包, 且仅当存在金额差异时才标记 (与 QQ 拼手气一致)
     best = amount == data.get("max_amt", 0) > 0 and amount > data.get("min_amt", 0)
     suffix = " 🎉手气最佳" if best else ""
+    if not amounts:
+        # 红包已被领完, 立即删除记录释放口令 (与 QQ 一致: 口令可再次使用)
+        delete(pack_id, _rp_gid())
     return True, amount, f"抢到 {amount} 积分{suffix}", len(amounts)
 
 
@@ -1901,6 +1906,32 @@ def list_redpacks(gid=None):
                 "count": data.get("count"),
             })
     return available
+
+
+def _rp_cleanup_expired():
+    """插件启动时清理所有群中已过期但未删除的红包: 退回剩余积分并释放口令。
+
+    兼容旧逻辑: 旧版 _expire_refund 仅清空 amounts 未删除记录, 导致口令被永久占用;
+    且过期红包若从未被「抢/列表」触发, 积分也一直未退。此处统一补清理。
+    """
+    for gid in _rp_list_groups():
+        if gid in ("_no_group", "_meta"):
+            continue
+        for pack_id in list(list_all(gid).keys()):
+            data = load(pack_id, gid)
+            if data is None:
+                continue
+            if _is_expired(data):
+                _expire_refund(pack_id, data, gid)
+    # 旧版 _no_group 桶 (若有遗留)
+    legacy = _rp_load().get("_no_group")
+    if isinstance(legacy, dict):
+        for pack_id in list(legacy.keys()):
+            pd = load(pack_id, "_no_group")
+            if pd is None:
+                continue
+            if _is_expired(pd):
+                _expire_refund(pack_id, pd, "_no_group")
 
 # ---------- from app/points.py ----------
 
