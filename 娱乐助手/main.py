@@ -27,7 +27,7 @@ __plugin_meta__ = {
     "name": "娱乐助手",
     "author": "慕言 慕北",
     "description": "群娱乐玩法全家桶：每日签到/抽奖/反甲/抢劫/同归于尽/积分红包/禁言/引用撤回/生图扣积分/台风查询出图/二次元插画，含 Web 管理后台，积分按群独立",
-    "version": "2.4.12",
+    "version": "2.4.13",
     "github": "https://github.com/shitaomuyan-cloud/-",
 }
 log = get_logger(PLUGIN, "娱乐助手")
@@ -68,6 +68,7 @@ def _gid_handler(fn):
         gid = str(getattr(event, "group_id", "") or "")
         points.set_group(gid)
         entconfig.set_current(entconfig.group_config(gid))
+        _rp_set_group(gid)
         return await fn(event, match)
 
     return wrapper
@@ -1781,7 +1782,7 @@ def create_redpack(sender_id, total_points: int, count: int, password: str = "")
     password = str(password or "").strip()
     if not (password.isdigit() and 1 <= len(password) <= 4):
         return False, "口令需为 1~4 位数字", None
-    if load(password) is not None:
+    if load(password, _rp_gid()) is not None:
         return False, f"口令 {password} 已被占用, 换一个试试", None
     if not can_afford(sender_id, total_points):
         return False, "积分不足", None
@@ -1822,7 +1823,7 @@ def create_redpack(sender_id, total_points: int, count: int, password: str = "")
         "min_amt": min_amt,
         "created_at": datetime.now().isoformat(),
         "expires_at": time.time() + REDPACK_TTL,
-    })
+    }, _rp_gid())
     return True, f"红包已发出, 共 {total_points} 积分, {count} 份", pack_id
 
 
@@ -1830,13 +1831,13 @@ def _is_expired(data) -> bool:
     return time.time() > float(data.get("expires_at") or 0)
 
 
-def _expire_refund(pack_id, data) -> int:
+def _expire_refund(pack_id, data, gid=None) -> int:
     """红包超时未领完: 将剩余积分退回发送者, 返回退还数量。"""
     amounts = data.get("amounts") or []
     unclaimed = sum(amounts)
     data["amounts"] = []
 
-    save(pack_id, data)
+    save(pack_id, data, gid or _rp_gid())
     if unclaimed > 0:
         points.add_points(data.get("sender_id"), unclaimed)
     return unclaimed
@@ -1845,11 +1846,11 @@ def _expire_refund(pack_id, data) -> int:
 def claim_redpack(user_id, pack_id: str):
     """抢红包: 返回 (ok, amount, msg, remaining)。"""
 
-    data = load(pack_id)
+    data = load(pack_id, _rp_gid())
     if data is None:
         return False, 0, "红包不存在或已过期", 0
     if _is_expired(data):
-        _expire_refund(pack_id, data)
+        _expire_refund(pack_id, data, _rp_gid())
         return False, 0, "红包已超时, 剩余积分已退回", 0
     if str(user_id) == data.get("sender_id"):
         return False, 0, "不能抢自己的红包", len(data.get("amounts") or [])
@@ -1863,7 +1864,7 @@ def claim_redpack(user_id, pack_id: str):
     claimed[str(user_id)] = amount
     data["claimed"] = claimed
     data["amounts"] = amounts
-    save(pack_id, data)
+    save(pack_id, data, _rp_gid())
     points.add_points(user_id, amount)
     # 手气最佳: 抢到全局最大包, 且仅当存在金额差异时才标记 (与 QQ 拼手气一致)
     best = amount == data.get("max_amt", 0) > 0 and amount > data.get("min_amt", 0)
@@ -1871,9 +1872,9 @@ def claim_redpack(user_id, pack_id: str):
     return True, amount, f"抢到 {amount} 积分{suffix}", len(amounts)
 
 
-def claim_any_redpack(user_id):
+def claim_any_redpack(user_id, gid=None):
     """不指定口令, 随机抢一个可抢礼包。返回与 claim_redpack 相同。"""
-    packs = list_redpacks()
+    packs = list_redpacks(gid)
     for pack in packs:
         if str(pack.get("sender_id")) == str(user_id):
             continue
@@ -1883,13 +1884,13 @@ def claim_any_redpack(user_id):
     return False, 0, "当前没有可抢的红包", 0
 
 
-def list_redpacks():
-    """列出所有可用红包。"""
+def list_redpacks(gid=None):
+    """列出当前群可用红包。"""
 
     available = []
-    for pack_id, data in list_all().items():
+    for pack_id, data in list_all(gid or _rp_gid()).items():
         if _is_expired(data):
-            _expire_refund(pack_id, data)
+            _expire_refund(pack_id, data, gid or _rp_gid())
             continue
         if data.get("amounts"):
             available.append({
@@ -2396,7 +2397,17 @@ def save(pack_id: str, data: dict, gid=None):
 
 
 def load(pack_id: str, gid=None) -> dict | None:
-    return _rp_gid_store(gid).get(pack_id)
+    store = _rp_gid_store(gid)
+    if pack_id in store:
+        return store[pack_id]
+    # 兼容旧版: 红包曾统一落在 _no_group 桶, 首次访问迁移到当前群
+    legacy = _rp_load().get("_no_group")
+    if isinstance(legacy, dict) and pack_id in legacy:
+        data = legacy.pop(pack_id)
+        store[pack_id] = data
+        _rp_save()
+        return data
+    return None
 
 
 def list_all(gid=None) -> dict:
@@ -2883,7 +2894,7 @@ async def _api_save_hosting(request):
 
 async def _api_redpacks(request):
     gid = _resolve_gid(request)
-    packs = games.list_redpacks()
+    packs = games.list_redpacks(gid)
     data = []
     for x in packs:
         total = int(x.get("total") or 0)
